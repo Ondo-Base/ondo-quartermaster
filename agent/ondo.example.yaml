@@ -30,16 +30,25 @@ policy:
   writes_require_approval: true
   # Connectors people may allow. With a control plane, the organisation's policy
   # replaces this list.
-  allowed_connectors: [ticketing]
+  allowed_connectors: [ticketing, mail, calendar, documents]
 
 # Connectors, reached over MCP. Each one is allowed by the person on its first use
 # (and only if policy lists it); every change it makes stops for approval.
 connectors:
+  # Addresses outside this domain are flagged in approvals.
+  org_domain: northwind-ops.com
   ticketing:
     # The sample service desk (demo/ticketing_server.py). A real one is its MCP server:
     # command: [...] for a local server, or url: https://... (streamable HTTP) with
     # token_env naming the environment variable that holds its bearer token.
     command: ["{python}", -m, ondo_agent.demo.ticketing_server, --store, .ondo/tickets.json]
+  # The sample mailbox, calendar and team sites (demo/workplace_servers.py).
+  mail:
+    command: ["{python}", -m, ondo_agent.demo.workplace_servers, --connector, mail, --store, .ondo/mail.json]
+  calendar:
+    command: ["{python}", -m, ondo_agent.demo.workplace_servers, --connector, calendar, --store, .ondo/calendar.json]
+  documents:
+    command: ["{python}", -m, ondo_agent.demo.workplace_servers, --connector, documents, --store, .ondo/documents.json]
   # Any other MCP server: declare each tool's effect, or it is not offered.
   # billing:
   #   url: https://mcp.billing.internal/mcp

@@ -109,13 +109,14 @@ export function Files() {
           <aside style={{ width: 340, flexShrink: 0, display: "flex", flexDirection: "column", gap: 16 }}>
             <div className="card">
               <div className="card-head" style={{ padding: "0 16px" }}><span className="eyebrow-sm">Connected apps</span></div>
-              <App icon="folder" title="Document store" meta={`${data.folders.length} granted folder${data.folders.length === 1 ? "" : "s"} · read, and write with approval`} />
+              <App icon="folder" title="Folders on this computer" meta={`${data.folders.length} granted folder${data.folders.length === 1 ? "" : "s"} · read, and write with approval`} />
               <div className="divider" />
               <App icon="globe" title="Web portals" meta={input ? "Through the browser. Only origins your administrator allows; submitting needs approval." : "Off. Grant “Type and click for you” to use them."} />
+              {connectors.length === 0 && <><div className="divider" /><App icon="mail" title="Mail, calendar and other apps" meta="No connectors are set up on this computer" muted /></>}
               {connectors.map((c) => (
                 <div key={c.id}>
                   <div className="divider" />
-                  <App icon="plug" title={c.name}
+                  <App icon={c.id === "mail" || c.id === "calendar" ? "mail" : c.id === "documents" ? "document" : "plug"} title={c.name}
                     meta={!c.allowed_by_policy ? "Not allowed by your administrator"
                       : c.consent ? `Allowed by you ${whenLabel(c.consent.at).toLowerCase()} · reads freely, every change asks you first`
                       : "Asks you the first time a task uses it"}
@@ -123,7 +124,6 @@ export function Files() {
                     action={c.consent ? <button type="button" className="link-btn" style={{ fontSize: 13, fontWeight: 600 }} onClick={() => revoke(c.id, c.name)}>Revoke</button> : undefined} />
                 </div>
               ))}
-              {!connectors.some((c) => c.id === "mail") && <><div className="divider" /><App icon="mail" title="Mail and calendar" meta="Not connected" muted /></>}
             </div>
             <div className="card card-pad" style={{ padding: 16, gap: 8 }}>
               <span className="eyebrow-sm">Screen access</span>
@@ -139,7 +139,7 @@ export function Files() {
   );
 }
 
-function App({ icon, title, meta, muted, action }: { icon: "folder" | "globe" | "mail" | "plug"; title: string; meta: string; muted?: boolean; action?: ReactNode }) {
+function App({ icon, title, meta, muted, action }: { icon: "folder" | "globe" | "mail" | "plug" | "document"; title: string; meta: string; muted?: boolean; action?: ReactNode }) {
   return (
     <div className="row" style={{ padding: "14px 16px", gap: 12 }}>
       <Icon name={icon} size={18} color={muted ? "var(--ink-muted)" : "var(--accent-hover)"} />

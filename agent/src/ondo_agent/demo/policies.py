@@ -394,3 +394,78 @@ def ticket_reply_policy(drive: Path, customer: str = "Halleck"):
 def _why(text: str) -> str:
     m = re.search(r"Permission denied: ([^.]*)", text)
     return f" ({m.group(1)})" if m else ""
+
+
+def mail_and_calendar_policy(drive: Path):
+    """ "Answer Priya's email with the renewal value from the signed contract, and
+    offer her a 30-minute call next week." Finds the email, reads it and the
+    contract, drafts and sends the reply, finds free time and invites her."""
+    contract = drive / "Contracts" / "Halleck_MSA_2026.pdf"
+
+    def policy(messages: list[Message], tools) -> ModelResponse:
+        t = _turns(messages)
+        results = _tool_results(messages)
+        last = results[-1][1] if results else ""
+        joined = "\n".join(x for _, x in results)
+        if t == 0:
+            return call(("mail_search_mail", {"query": "renewal"}))
+        if t == 1:
+            m = re.search(r'"id": "(msg-\d+)"', last)
+            if not m:
+                return say("I could not find Priya's email." + _why(last))
+            return call(("mail_read_message", {"id": m.group(1)}), ("read_file", {"path": str(contract)}))
+        c = next(iter(parse_contracts(results).values()), None)
+        msg = re.search(r'"id": "(msg-\d+)"[^}]*"from": "([^"]+)"', joined)
+        if t == 2:
+            if not (c and msg):
+                return say("I could not read the email and the contract together.")
+            body = (
+                f"Hi Priya, the annual value for the renewed term is {c['new']:,} GBP (clause {c['clause']} of "
+                f"the signed agreement). Happy to talk it through; I'll send a time. Best, Mara"
+            )
+            return call(
+                (
+                    "mail_create_draft",
+                    {
+                        "to": msg.group(2),
+                        "subject": "Re: Renewal value for the new term",
+                        "body": body,
+                        "reply_to": msg.group(1),
+                    },
+                )
+            )
+        if t == 3:
+            d = re.search(r'"id": "(draft-\d+)"', last)
+            return call(("mail_send_draft", {"id": d.group(1)})) if d else say("The draft was not saved.")
+        if t == 4:
+            if "not approved" in last:
+                return say("The reply was not approved, so nothing was sent.")
+            return call(
+                (
+                    "calendar_find_free_time",
+                    {"duration_minutes": 30, "start": "2026-10-06T00:00", "end": "2026-10-10T23:59"},
+                )
+            )
+        if t == 5:
+            slot = re.search(r'"start": "([^"]+)", "end": "([^"]+)"', last)
+            if not slot:
+                return say("I sent the reply but found no free half hour next week.")
+            return call(
+                (
+                    "calendar_create_event",
+                    {
+                        "title": "Halleck renewal call",
+                        "start": slot.group(1),
+                        "end": slot.group(2),
+                        "attendees": msg.group(2) if msg else "",
+                    },
+                )
+            )
+        if "not approved" in last:
+            return say("I sent the reply, but the invitation was not approved.")
+        ev = re.search(r'"start": "([^"]+)"', last)
+        return say(
+            f"I replied to Priya with {c['new']:,} GBP and invited her to a call at {ev.group(1) if ev else '?'}."
+        )
+
+    return policy

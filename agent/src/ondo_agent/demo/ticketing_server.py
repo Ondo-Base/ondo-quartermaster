@@ -19,6 +19,8 @@ import os
 import time
 from pathlib import Path
 
+from ._mcp import JsonStore, server_class
+
 STATUSES = ("open", "pending", "solved", "closed")  # pending: waiting on the customer
 PRIORITIES = ("low", "normal", "high", "urgent")
 
@@ -72,43 +74,19 @@ SEED = [
 ]
 
 
-class Store:
+class Store(JsonStore):
     def __init__(self, path: Path):
-        self.path = path
-        if not path.exists():
-            self._save({t["id"]: t for t in SEED})
-
-    def _load(self) -> dict[str, dict]:
-        return json.loads(self.path.read_text())
-
-    def _save(self, data: dict[str, dict]) -> None:
-        tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data, indent=2))
-        tmp.replace(self.path)
+        super().__init__(path, SEED)
 
     def get(self, ticket_id: str) -> dict:
-        t = self._load().get(ticket_id)
-        if t is None:
-            raise ValueError(f"no ticket {ticket_id}")
-        return t
-
-    def put(self, t: dict) -> dict:
-        data = self._load()
-        data[t["id"]] = t
-        self._save(data)
-        return t
-
-    def all(self) -> list[dict]:
-        return list(self._load().values())
+        try:
+            return super().get(ticket_id)
+        except ValueError:
+            raise ValueError(f"no ticket {ticket_id}") from None
 
 
 def build(store: Store):
-    try:
-        from mcp.server.mcpserver import MCPServer as Server
-        from mcp.server.mcpserver.exceptions import ToolError
-    except ImportError:  # the MCP SDK before 2.0
-        from mcp.server.fastmcp import FastMCP as Server
-        from mcp.server.fastmcp.exceptions import ToolError
+    Server, ToolError = server_class()
 
     mcp = Server("ticketing", log_level="WARNING")
 

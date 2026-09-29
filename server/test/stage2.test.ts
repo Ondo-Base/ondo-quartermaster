@@ -347,7 +347,7 @@ describe("connector consent (Stage 6)", () => {
     agent.event(run_id, 8, "approval_resolved", { approval_id: "apr_c3", approved: true, by: "mara.okonjo@northwind-ops.com", kind: "consent" });
     await new Promise((r) => setTimeout(r, 100));
     const policy = (await admin.req("GET", "/api/admin/overview")).json.policy;
-    expect(policy.allowed_connectors).toEqual(["ticketing"]);
+    expect(policy.allowed_connectors).toEqual(["ticketing", "mail", "calendar", "documents"]);
     await admin.req("PUT", "/api/admin/policy", { ...policy, allowed_connectors: [] });
     expect((await agent.next((m) => m.type === "policy" && m.policy.allowed_connectors.length === 0)).policy.allowed_connectors).toEqual([]);
     expect((await agent.next((m) => m.type === "grants" && m.reason === "no longer allowed by policy")).connectors).toEqual({});

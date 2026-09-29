@@ -60,7 +60,11 @@ class ConnectorService:
 
     @classmethod
     def from_config(cls, section: dict[str, Any]) -> ConnectorService:
+        from . import catalog
+
         decls, conns = {}, {}
+        if isinstance((section or {}).get("org_domain"), str):
+            catalog.ORG["domain"] = section["org_domain"]
         for cid, c in (section or {}).items():
             if not isinstance(c, dict) or not c.get("enabled", True):
                 continue
@@ -202,10 +206,12 @@ class ConnectorService:
                     app=decl.name,
                     element=t.name.replace("_", " "),
                     declared_effects=t.gate_effects(args),
+                    effects_enumerated=t.effects is not None,
                 ),
                 title=f"{title} in {decl.name}",
                 summary=f"Nothing has changed in {decl.name} yet.",
                 values=t.approval_values(args, before),
+                diff=t.diff(args, before) if t.diff else None,
             )
             if not outcome.allowed:
                 by = f" by {outcome.by}" if outcome.by else ""
