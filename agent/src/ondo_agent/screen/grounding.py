@@ -59,13 +59,18 @@ _FILLER = {
 }  # fmt: skip
 
 
+_QUOTED = re.compile(r"[\"“”']([^\"“”']+)[\"“”']")
+
+
 def _norm(s: str) -> str:
     return re.sub(r"[^\w]", "", s.lower())
 
 
 def phrase_of(target: str) -> list[str]:
-    quoted = re.findall(r"[\"“']([^\"”']+)[\"”']", target)
-    words = (quoted[0] if quoted else target).split()
+    # Linear: the run inside the quotes can never contain a quote of any kind,
+    # and the description is short by nature.
+    quoted = _QUOTED.findall(target[:300])
+    words = (quoted[0] if quoted else target[:300]).split()
     return [n for n in (_norm(w) for w in words) if n and (quoted or n not in _FILLER)]
 
 

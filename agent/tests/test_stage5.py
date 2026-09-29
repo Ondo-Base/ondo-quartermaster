@@ -382,6 +382,10 @@ def test_grounding_model_formats():
     assert parse_point("I cannot see it") is None
     assert phrase_of("the Submit button") == ["submit"]
     assert phrase_of('the "Save record" link') == ["save", "record"]
+    # A model-supplied target cannot make the quote matching backtrack.
+    t0 = time.perf_counter()
+    phrase_of('"' + "\u201c!" * 50_000)
+    assert time.perf_counter() - t0 < 0.5
 
 
 def test_escape_is_never_a_key_ondo_sends():
