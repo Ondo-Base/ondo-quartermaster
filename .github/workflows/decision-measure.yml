@@ -1,0 +1,71 @@
+name: decision-measure
+
+# Measures a Laya checkpoint on the decision fixtures, on a CPU runner, and keeps
+# the report. Run by hand (Actions > decision-measure > Run workflow). This is
+# how to get a real number for a checkpoint when the machine you are on cannot
+# reach Hugging Face. To compare with a reference (Jev's report on the same
+# fixtures), commit that report and name it in "bar": the job fails below it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: Hugging Face repository of the checkpoint
+        default: convaiinnovations/laya
+      subfolder:
+        description: Checkpoint inside the repository (empty for the English root, or multilingual, typed-decisions)
+        default: ""
+      revision:
+        description: Commit, branch or tag to pin
+        default: main
+      bar:
+        description: Path in this repository to a reference report to meet (optional)
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: |
+          python -m venv .venv
+          .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+          .venv/bin/pip install -e "agent[laya]"
+      - name: Download the checkpoint
+        env:
+          REPO: ${{ inputs.repo }}
+          SUBFOLDER: ${{ inputs.subfolder }}
+          REVISION: ${{ inputs.revision }}
+        run: |
+          .venv/bin/python - <<'PY'
+          import os
+          from huggingface_hub import snapshot_download
+          sub = os.environ["SUBFOLDER"].strip("/")
+          prefix = f"{sub}/" if sub else ""
+          names = ["rl_agent_config.json", "model.safetensors", "tokenizer/*", "encoder/*"]
+          d = snapshot_download(os.environ["REPO"], revision=os.environ["REVISION"], local_dir="ckpt",
+                                allow_patterns=[prefix + n for n in names])
+          print("checkpoint in", os.path.join(d, sub))
+          PY
+      - name: Measure
+        env:
+          SUBFOLDER: ${{ inputs.subfolder }}
+          BAR: ${{ inputs.bar }}
+        run: |
+          set -o pipefail
+          args=(--fixtures agent/fixtures/decision --provider laya --checkpoint "ckpt/${SUBFOLDER}" --out report.json)
+          if [ -n "$BAR" ]; then args+=(--bar "$BAR"); fi
+          .venv/bin/python -m ondo_agent.decision.calibrate "${args[@]}" | tee summary.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: decision-report
+          path: |
+            report.json
+            summary.txt

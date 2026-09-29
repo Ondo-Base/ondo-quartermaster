@@ -152,7 +152,7 @@ works without the control plane:
 ## Tests
 
 ```sh
-cd agent && .venv/bin/pytest -q      # stages 0 to 6, and the control-plane integration
+cd agent && .venv/bin/pytest -q      # stages 0 to 6.5, and the control-plane integration
 npm test                             # control plane (vitest) and web
 npm run typecheck
 ```
@@ -186,6 +186,7 @@ rules an admin needs to switch on to enforce them.
 | 4 · Semantic desktop control | A legacy app driven by element name, not coordinates, surviving a moved window and a rescaled display, picking its target without an orchestrator turn | `test_stage4.py` — a GTK billing app on a virtual display, run at 1× and 2× scale and moved and resized mid-task; the model names targets in words and the decision layer picks them; the submit is gated with the exact value; Escape twice (real keypresses) takes the keyboard back and stops the run. `test_integration.py` runs the same task through the control plane |
 | 5 · Pixels, as the floor | A Citrix or remote-desktop window can be operated; the harness picks pixels only after trying the ladder; grounding can be switched to a locally hosted model without touching the executor | `test_stage5.py`: a window that is one canvas (the Citrix stand-in) operated at 1x and 2x, moved and resized mid-task, by a text-only model naming targets and by a vision model giving pixels in an 800-pixel screenshot. `screen_act` refuses until `desktop_inspect` found nothing to act on. The submit is gated with the typed value, and Escape is never sent. The same task passes with grounding pointed at a local UI-TARS-style endpoint by configuration alone. `test_integration.py` covers screen watching and "Ask about this screen" through the control plane |
 | 6 · Connectors and scale | IT can deploy through Intune and control MCP access from Settings without talking to us. **Built:** per-connector consent; ticketing, mail, calendar, team-sites and ledger connectors; saved workflows; long-running tasks; managed policy, enrollment and Intune packaging. **Not built:** the ODR | `test_stage6.py`, `test_stage6_workplace.py`, against real MCP servers over stdio: consent once per connector, remembered until revoked; connectors policy does not allow are never started; every change gated with its exact values (recipients outside the organisation flagged, before and after, diffs); a ticket or email carrying instructions taints the run. `test_stage6_long.py`: a reconciliation waited for with progress; after the agent is killed, a new process waits for the same operation rather than starting another, and says honestly what became of each interrupted call. `test_stage6_managed.py`: device-management settings only narrow, and the ADMX template writes exactly what the agent reads. `test_integration.py`: consent and revocation from the web; a run surviving an agent restart through the control plane; an enrolled agent that does nothing until its person confirms it. `server/test/stage2.test.ts`: saved workflows |
+| 6.5 · The local decision model | Screening and element selection meet the Jev-measured bar with no call leaving the customer's network, and both adapters stay green in CI. **Built:** the Laya adapter (a `laya-serve` inside the network, or local weights), one `/v1/systemone` wire shared with Jev, the network confinement, labelling and export of logged decisions, and measurement against a reference report. **Not done:** a fine-tuned checkpoint, Jev's measurement, and so the bar itself | `test_stage65.py`: the two adapters send identical requests; public endpoints and Hub ids are refused and environment proxies ignored; decisions from a real run are labelled and exported, split by run; calibration fails below the bar. With Laya installed (the **Laya adapter** CI job): every fixture question answered by Laya's own inference code from a checkpoint on disk, offline, and the same answers through Laya's own HTTP server. See [`docs/decision-local.md`](docs/decision-local.md) |
 
 ## What is not done, or not verified here
 
@@ -196,8 +197,9 @@ Said plainly, per the plan's own rule about never claiming what is not there:
   and the end-to-end tests use a scripted model that acts only on tool output. The
   first run against real providers should be the §9 eval set, not a demo.
 - **Jev's endpoint is unverified**, as the plan flags. The adapter takes its URL
-  from configuration and isolates the wire mapping in two functions; confirm both
-  against TypeSafe's official docs before enabling it. The committed thresholds
+  from configuration. Its wire (`decision/systemone.py`, shared with Laya) is the
+  `/v1/systemone` shape Laya documents as Jev's, run only against Laya's server;
+  confirm it against TypeSafe's official docs before enabling Jev. The committed thresholds
   were measured on the rules baseline, which was tuned on the same 50 fixtures:
   re-measure on a held-out set, and against Jev, before trusting them.
 - **SSO** (OIDC with PKCE, SAML) is implemented but was only exercised through the
@@ -249,7 +251,16 @@ Said plainly, per the plan's own rule about never claiming what is not there:
   connector's long operation is declared as a start tool plus a status tool,
   and the agent keeps the handle in the log. When servers speak Tasks natively,
   that is a new transport for the same `OperationDecl`.
-- **Stage 6.5, the local decision model, is not started.**
+- **Stage 6.5 is built as far as it can go without labels, a GPU and a Jev key.**
+  The Laya adapter has run against Laya 0.3.22's own inference code and HTTP
+  server, but only with a tiny random checkpoint. Hugging Face was not
+  reachable from here, so no real Laya weights have run (the manual
+  **decision-measure** workflow can run them). No checkpoint has been
+  fine-tuned: logged decisions have no labels until a person adds them
+  (`ondo-agent decisions label`). Jev has not been measured, so there is no bar
+  to meet yet. The ONNX Runtime path is written but has not run. The bar's
+  element-choice half rests on 4 fixtures; add more before trusting it. See
+  [`docs/decision-local.md`](docs/decision-local.md).
 - **Office round-trips**: `openpyxl` keeps formulas (and macros in `.xlsm`) but
   drops charts and images on save. The plan's small COM path for what the
   libraries cannot do is not built.

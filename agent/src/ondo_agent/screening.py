@@ -41,7 +41,9 @@ class Screener:
         # One question per chunk, each against its own chunk as state.
         ps: list[float] = []
         for chunk, q in zip(chunks, qs, strict=True):
-            [a] = await self.model.ask(chunk, [q], log=None, purpose="screening")
+            [a] = await self.model.ask(
+                chunk, [q], log=None, purpose="screening", run_id=log.run_id if log is not None else None
+            )
             ps.append(a.probability)
         p = max(ps)
         res = ScreenResult(p >= self.threshold, p, origin)

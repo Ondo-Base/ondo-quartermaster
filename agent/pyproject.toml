@@ -31,6 +31,11 @@ desktop = [
   "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
 ]
 
+# The self-hosted decision model, run in the agent (decision.checkpoint). Not needed
+# to call a laya-serve (decision.endpoint). Pulls in torch: install a CPU-only
+# build first where there is no GPU.
+laya = ["laya[onnx]==0.3.22"]
+
 [project.scripts]
 ondo-agent = "ondo_agent.cli:main"
 
