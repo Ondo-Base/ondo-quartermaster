@@ -3,11 +3,13 @@ import type { Ctx } from "../app.js";
 import { all, now, one, parse, run } from "../db.js";
 import { audit } from "../lib/audit.js";
 import { guard } from "../lib/auth.js";
+import { id } from "../lib/crypto.js";
 
 interface RunRow {
   id: string; agent_id: string; user_id: string; request: string; title: string; status: string;
-  answer: string; reason: string; model: string; created_at: number; updated_at: number;
+  answer: string; reason: string; model: string; created_at: number; updated_at: number; workflow_id: string | null;
 }
+interface WorkflowRow { id: string; user_id: string; name: string; request: string; created_from: string | null; created_at: number; updated_at: number }
 interface ApprovalRow {
   id: string; run_id: string; title: string; summary: string; effects_json: string; values_json: string;
   diff: string | null; tool: string; status: string; resolved_by: string | null; resolved_at: number | null; note: string; created_at: number;
@@ -54,12 +56,17 @@ export function runRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
     return rows.map(view);
   });
 
-  app.post<{ Body: { request?: string; agent_id?: string; context?: { window?: string } } }>("/api/runs", { preHandler: verified }, async (req, reply) => {
+  app.post<{ Body: { request?: string; agent_id?: string; context?: { window?: string }; workflow_id?: string } }>("/api/runs", { preHandler: verified }, async (req, reply) => {
     const a = req.authed!;
-    const request = String(req.body?.request ?? "").trim();
+    // A saved workflow runs its saved request, unless the person edited it first.
+    const wf = req.body?.workflow_id
+      ? one<WorkflowRow>(db, "SELECT * FROM workflows WHERE id = ? AND user_id = ?", req.body.workflow_id, a.user.id)
+      : undefined;
+    if (req.body?.workflow_id && !wf) return reply.code(404).send({ error: "That workflow no longer exists." });
+    const request = String(req.body?.request ?? wf?.request ?? "").trim();
     if (!request) return reply.code(400).send({ error: "Say what you need." });
     const agent = one<{ id: string }>(db,
-      "SELECT id FROM agents WHERE user_id = ? AND revoked = 0 AND (? IS NULL OR id = ?) ORDER BY last_seen DESC LIMIT 1",
+      "SELECT id FROM agents WHERE user_id = ? AND revoked = 0 AND confirmed = 1 AND (? IS NULL OR id = ?) ORDER BY last_seen DESC LIMIT 1",
       a.user.id, req.body?.agent_id ?? null, req.body?.agent_id ?? null);
     if (!agent) return reply.code(409).send({ error: "Pair the desktop agent first." });
     // "Ask about this screen": only the window the agent says is in front now.
@@ -72,11 +79,83 @@ export function runRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
       }
       context = { window: screen.window };
     }
-    const runId = hub.startRun(agent.id, a.user.id, a.user.email, request, context);
+    const runId = hub.startRun(agent.id, a.user.id, a.user.email, request, context, wf ? { id: wf.id, name: wf.name } : undefined);
     if (!runId) return reply.code(409).send({ error: "The desktop agent is not connected. Open it on your computer and try again." });
-    audit(db, a.user.org_id, `user:${a.user.email}`, "run.requested", runId, { request, agent_id: agent.id, ...(context ? { context } : {}) });
+    audit(db, a.user.org_id, `user:${a.user.email}`, "run.requested", runId,
+      { request, agent_id: agent.id, ...(context ? { context } : {}), ...(wf ? { workflow_id: wf.id, workflow: wf.name } : {}) });
     hub.publish(a.user.org_id, a.user.id, "run", { run_id: runId, status: "queued" });
     return { run_id: runId };
+  });
+
+  // -- saved workflows ----------------------------------------------------------------------
+
+  function workflowView(w: WorkflowRow) {
+    const last = one<{ created_at: number; status: string; id: string }>(db,
+      "SELECT id, created_at, status FROM runs WHERE workflow_id = ? ORDER BY created_at DESC LIMIT 1", w.id);
+    const count = one<{ n: number }>(db, "SELECT COUNT(*) AS n FROM runs WHERE workflow_id = ?", w.id)!.n;
+    return { ...w, last_run: last ?? null, runs: count };
+  }
+
+  app.get("/api/workflows", { preHandler: verified }, async (req) => {
+    const a = req.authed!;
+    return all<WorkflowRow>(db, "SELECT * FROM workflows WHERE user_id = ? ORDER BY name COLLATE NOCASE", a.user.id).map(workflowView);
+  });
+
+  app.get<{ Params: { id: string } }>("/api/workflows/:id", { preHandler: verified }, async (req, reply) => {
+    const a = req.authed!;
+    const w = one<WorkflowRow>(db, "SELECT * FROM workflows WHERE id = ? AND user_id = ?", req.params.id, a.user.id);
+    if (!w) return reply.code(404).send({ error: "no such workflow" });
+    const runs = all<RunRow>(db, "SELECT * FROM runs WHERE workflow_id = ? ORDER BY created_at DESC LIMIT 20", w.id).map(view);
+    return { workflow: workflowView(w), runs };
+  });
+
+  const clean = (v: unknown, max: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+
+  app.post<{ Body: { name?: string; request?: string; from_run?: string } }>("/api/workflows", { preHandler: verified }, async (req, reply) => {
+    const a = req.authed!;
+    const from = req.body?.from_run ? one<RunRow>(db, "SELECT * FROM runs WHERE id = ? AND user_id = ?", req.body.from_run, a.user.id) : undefined;
+    if (req.body?.from_run && !from) return reply.code(404).send({ error: "no such run" });
+    const request = String(req.body?.request ?? from?.request ?? "").trim().slice(0, 4000);
+    const name = clean(req.body?.name ?? from?.title, 80);
+    if (!request) return reply.code(400).send({ error: "A workflow needs the request it runs." });
+    if (!name) return reply.code(400).send({ error: "Give the workflow a name." });
+    if (one(db, "SELECT id FROM workflows WHERE user_id = ? AND name = ? COLLATE NOCASE", a.user.id, name)) {
+      return reply.code(409).send({ error: `You already have a workflow called “${name}”.` });
+    }
+    const wid = id("wf");
+    const t = now();
+    run(db, "INSERT INTO workflows (id, user_id, name, request, created_from, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+      wid, a.user.id, name, request, from?.id ?? null, t, t);
+    audit(db, a.user.org_id, `user:${a.user.email}`, "workflow.saved", wid, { name, request, from_run: from?.id ?? null });
+    hub.publish(a.user.org_id, a.user.id, "workflow", { workflow_id: wid });
+    return workflowView(one<WorkflowRow>(db, "SELECT * FROM workflows WHERE id = ?", wid)!);
+  });
+
+  app.put<{ Params: { id: string }; Body: { name?: string; request?: string } }>("/api/workflows/:id", { preHandler: verified }, async (req, reply) => {
+    const a = req.authed!;
+    const w = one<WorkflowRow>(db, "SELECT * FROM workflows WHERE id = ? AND user_id = ?", req.params.id, a.user.id);
+    if (!w) return reply.code(404).send({ error: "no such workflow" });
+    const name = req.body?.name !== undefined ? clean(req.body.name, 80) : w.name;
+    const request = req.body?.request !== undefined ? String(req.body.request).trim().slice(0, 4000) : w.request;
+    if (!name || !request) return reply.code(400).send({ error: "A workflow needs a name and a request." });
+    if (name.toLowerCase() !== w.name.toLowerCase()
+      && one(db, "SELECT id FROM workflows WHERE user_id = ? AND name = ? COLLATE NOCASE", a.user.id, name)) {
+      return reply.code(409).send({ error: `You already have a workflow called “${name}”.` });
+    }
+    run(db, "UPDATE workflows SET name = ?, request = ?, updated_at = ? WHERE id = ?", name, request, now(), w.id);
+    audit(db, a.user.org_id, `user:${a.user.email}`, "workflow.changed", w.id, { name, request });
+    hub.publish(a.user.org_id, a.user.id, "workflow", { workflow_id: w.id });
+    return workflowView(one<WorkflowRow>(db, "SELECT * FROM workflows WHERE id = ?", w.id)!);
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/workflows/:id", { preHandler: verified }, async (req, reply) => {
+    const a = req.authed!;
+    const w = one<WorkflowRow>(db, "SELECT * FROM workflows WHERE id = ? AND user_id = ?", req.params.id, a.user.id);
+    if (!w) return reply.code(404).send({ error: "no such workflow" });
+    run(db, "DELETE FROM workflows WHERE id = ?", w.id);
+    audit(db, a.user.org_id, `user:${a.user.email}`, "workflow.deleted", w.id, { name: w.name });
+    hub.publish(a.user.org_id, a.user.id, "workflow", { workflow_id: w.id, deleted: true });
+    return { deleted: w.id };
   });
 
   app.get<{ Params: { id: string }; Querystring: { after?: string } }>("/api/runs/:id", { preHandler: verified }, async (req, reply) => {

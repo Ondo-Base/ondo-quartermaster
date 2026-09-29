@@ -84,7 +84,8 @@ class ToolContext:
     a live run, a replay and a test.
     """
 
-    def __init__(self, *, run, broker, log, gates, approvals, screener, config):
+    def __init__(self, *, run, broker, log, gates, approvals, screener, config, call_id: str = ""):
+        self.call_id = call_id  # the tool call being served, for events that must name it
         self.run = run
         self.broker = broker
         self.log = log
@@ -92,6 +93,18 @@ class ToolContext:
         self.approvals = approvals
         self.screener = screener
         self.config = config
+
+    def for_call(self, call_id: str) -> ToolContext:
+        return ToolContext(
+            run=self.run,
+            broker=self.broker,
+            log=self.log,
+            gates=self.gates,
+            approvals=self.approvals,
+            screener=self.screener,
+            config=self.config,
+            call_id=call_id,
+        )
 
 
 # -- wire-format generators --------------------------------------------------

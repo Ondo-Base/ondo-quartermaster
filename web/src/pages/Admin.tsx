@@ -145,6 +145,7 @@ export function AdminConsole() {
         ))}
       </section>
 
+      <EnrollmentCard />
       <SiemCard sinks={data.siem_sinks} onChange={reload} />
     </AdminShell>
   );
@@ -198,6 +199,55 @@ function ScimToken() {
   const [tok, setTok] = useState("");
   if (tok) return <span className="caption">SCIM token, shown once: <code style={{ userSelect: "all" }}>{tok}</code></span>;
   return <button type="button" className="btn btn-sm" onClick={async () => { try { setTok((await api<{ token: string }>("/api/admin/scim-tokens", { body: { label: "Identity provider" } })).token); } catch (e) { toast((e as ApiError).message); } }}>Create a SCIM token</button>;
+}
+
+interface EnrollmentToken { id: string; label: string; created_by: string; created_at: number; revoked_at: number | null; uses: number }
+
+/** Tokens for device management: agents deployed by Intune or Group Policy enroll
+ * themselves with one, and each person confirms their computer before it does anything. */
+function EnrollmentCard() {
+  const { toast } = useShell();
+  const { data, reload } = useData<EnrollmentToken[]>("/api/admin/enrollment-tokens", () => false);
+  const [label, setLabel] = useState("");
+  const [shown, setShown] = useState<{ label: string; token: string } | null>(null);
+  return (
+    <section className="card">
+      <div className="card-head"><span className="eyebrow-sm">Deployment: enrollment tokens</span></div>
+      <p className="ui secondary" style={{ padding: "12px 20px 0" }}>
+        Put a token in the EnrollmentToken setting of the Ondo policy template (Intune or Group Policy), with ControlPlaneUrl.
+        The agent then sets itself up for whoever signs in, and does nothing until they confirm the computer is theirs.
+      </p>
+      {shown && (
+        <div className="callout" style={{ margin: "12px 20px 0" }}>
+          <span className="caption">{shown.label}, shown once: <code style={{ userSelect: "all" }}>{shown.token}</code></span>
+        </div>
+      )}
+      {(data ?? []).map((t) => (
+        <div key={t.id} className="row" style={{ padding: "12px 20px", borderTop: "1px solid var(--line-divider)" }}>
+          <span className="grow col">
+            <span className="ui" style={{ color: t.revoked_at ? "var(--ink-muted)" : "var(--ink)" }}>{t.label}</span>
+            <span className="caption">Made by {t.created_by} {whenLabel(t.created_at).toLowerCase()} · {t.uses} computer{t.uses === 1 ? "" : "s"} enrolled{t.revoked_at ? " · revoked" : ""}</span>
+          </span>
+          {!t.revoked_at && <button className="btn btn-sm btn-danger" onClick={async () => {
+            if (!confirm(`Revoke “${t.label}”? Computers already enrolled keep working; no new ones can enroll with it.`)) return;
+            try { await api(`/api/admin/enrollment-tokens/${t.id}`, { method: "DELETE" }); void reload(); } catch (e) { toast((e as ApiError).message); }
+          }}>Revoke</button>}
+        </div>
+      ))}
+      <form className="row" style={{ padding: "12px 20px", gap: 8, borderTop: "1px solid var(--line-divider)" }}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            const r = await api<{ label: string; token: string }>("/api/admin/enrollment-tokens", { body: { label } });
+            setShown(r); setLabel(""); void reload();
+          } catch (err) { toast((err as ApiError).message); }
+        }}>
+        <label className="sr-only" htmlFor="enr-label">Label</label>
+        <input id="enr-label" className="input grow" placeholder="Label, e.g. Intune: finance laptops" value={label} onChange={(e) => setLabel(e.target.value)} />
+        <button className="btn">Create a token</button>
+      </form>
+    </section>
+  );
 }
 
 function SiemCard({ sinks, onChange }: { sinks: Overview["siem_sinks"]; onChange: () => void }) {

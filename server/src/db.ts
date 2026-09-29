@@ -189,6 +189,32 @@ CREATE TABLE IF NOT EXISTS consents (
   PRIMARY KEY (agent_id, connector)
 );
 
+-- A request someone runs again and again, saved by name. Running one starts an
+-- ordinary run with the same grants, gates and approvals as any other.
+CREATE TABLE IF NOT EXISTS workflows (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  request TEXT NOT NULL,
+  created_from TEXT,                            -- the run it was saved from, if any
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+
+-- Organisation-wide tokens IT puts in its device management, so an agent can set
+-- itself up for the signed-in person without a pairing code. An agent enrolled
+-- this way does nothing until that person confirms the computer is theirs.
+CREATE TABLE IF NOT EXISTS enrollment_tokens (
+  id TEXT PRIMARY KEY,
+  token_hash TEXT NOT NULL UNIQUE,
+  org_id TEXT NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+  label TEXT NOT NULL,
+  created_by TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  revoked_at INTEGER,
+  uses INTEGER NOT NULL DEFAULT 0
+);
+
 CREATE INDEX IF NOT EXISTS runs_user ON runs(user_id, created_at);
 CREATE INDEX IF NOT EXISTS approvals_status ON approvals(status, created_at);
 CREATE INDEX IF NOT EXISTS audit_org ON audit(org_id, id);
@@ -200,7 +226,12 @@ export function openDb(path: string): DB {
   // Columns added after a database was first created.
   const cols = (db.prepare("PRAGMA table_info(agents)").all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("capabilities_json")) db.exec("ALTER TABLE agents ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '{}'");
+  // 0 until the person confirms a computer IT enrolled for them; paired agents are confirmed.
+  if (!cols.includes("confirmed")) db.exec("ALTER TABLE agents ADD COLUMN confirmed INTEGER NOT NULL DEFAULT 1");
+  if (!cols.includes("enrolled_via")) db.exec("ALTER TABLE agents ADD COLUMN enrolled_via TEXT");
   const acols = (db.prepare("PRAGMA table_info(approvals)").all() as { name: string }[]).map((c) => c.name);
+  const rcols = (db.prepare("PRAGMA table_info(runs)").all() as { name: string }[]).map((c) => c.name);
+  if (!rcols.includes("workflow_id")) db.exec("ALTER TABLE runs ADD COLUMN workflow_id TEXT");
   if (!acols.includes("kind")) db.exec("ALTER TABLE approvals ADD COLUMN kind TEXT NOT NULL DEFAULT 'effect'");
   if (!acols.includes("connector")) db.exec("ALTER TABLE approvals ADD COLUMN connector TEXT");
   return db;

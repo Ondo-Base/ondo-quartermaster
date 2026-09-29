@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,9 @@ from ondo_agent.demo import northwind
 from ondo_agent.models.adapters.scripted import call, say
 from ondo_agent.models.types import Message
 from ondo_agent.runtime import Config
+
+# A developer's or runner's own device-management policy must never leak into tests.
+os.environ["ONDO_IGNORE_MANAGED"] = "1"
 
 
 @pytest.fixture

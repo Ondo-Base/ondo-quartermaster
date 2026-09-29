@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<policyDefinitionResources xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                           revision="1.0" schemaVersion="1.0"
+                           xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <displayName>Ondo Quartermaster</displayName>
+  <description>Settings for the Ondo Quartermaster desktop agent.</description>
+  <resources>
+    <stringTable>
+      <string id="SUPPORTED_Ondo_1">Ondo Quartermaster agent 0.1 and later</string>
+      <string id="Ondo">Ondo Quartermaster</string>
+      <string id="OndoConnection">Connection and enrollment</string>
+      <string id="OndoAccess">What the agent may use</string>
+
+      <string id="ControlPlaneUrl">Control plane address</string>
+      <string id="ControlPlaneUrl_Explain">The address of your organisation's Ondo control plane, for example https://ondo.example.com. With an enrollment token, the agent sets itself up for whoever signs in to the computer.</string>
+
+      <string id="EnrollmentToken">Enrollment token</string>
+      <string id="EnrollmentToken_Explain">A token made in the Ondo admin console (Access and policy, Deployment). The agent uses it once, to enroll for the signed-in person, whose work address must match a person in your organisation. The enrolled agent does nothing until that person confirms, in Ondo on the web, that the computer is theirs. Revoke the token in the admin console to stop new enrollments; computers already enrolled keep working.</string>
+
+      <string id="AllowedConnectors">Connectors allowed on this computer</string>
+      <string id="AllowedConnectors_Explain">Connector names separated by semicolons, for example: ticketing;mail;calendar. Only these may be used on this computer, and only if your organisation's policy in the admin console allows them too; each person still allows each one on first use. Enabled but empty: no connector may be used. Not configured: the organisation's policy alone decides.</string>
+
+      <string id="DisabledConnectors">Connectors turned off on this computer</string>
+      <string id="DisabledConnectors_Explain">Connector names separated by semicolons. These are never started or offered on this computer, whatever else allows them.</string>
+
+      <string id="DisabledGrants">Access that cannot be granted</string>
+      <string id="DisabledGrants_Explain">Any of files, screen, input, separated by semicolons. The person cannot grant these on this computer.</string>
+
+      <string id="ExcludedPaths">Excluded folders and files</string>
+      <string id="ExcludedPaths_Explain">Path patterns separated by semicolons, for example: **/Finance/Payroll/**;**/*.kdbx. Never readable, never grantable. Added to the exclusions in your organisation's policy.</string>
+
+      <string id="ExcludedWindows">Excluded windows</string>
+      <string id="ExcludedWindows_Explain">Window or application names separated by semicolons. Never read or captured. Added to the exclusions in your organisation's policy.</string>
+
+      <string id="DisableScreenWatching">Turn off screen watching</string>
+      <string id="DisableScreenWatching_Explain">When enabled, the agent does not keep track of which shared window is in front, and "Ask about this screen" is unavailable.</string>
+
+      <string id="DisablePixels">Turn off operating windows by screenshot</string>
+      <string id="DisablePixels_Explain">When enabled, the agent never takes screenshots or operates a window by pixels. It uses files, the browser and the accessibility tree only.</string>
+    </stringTable>
+    <presentationTable>
+      <presentation id="ControlPlaneUrl"><textBox refId="ControlPlaneUrl_Value"><label>Address:</label></textBox></presentation>
+      <presentation id="EnrollmentToken"><textBox refId="EnrollmentToken_Value"><label>Token:</label></textBox></presentation>
+      <presentation id="AllowedConnectors"><textBox refId="AllowedConnectors_Value"><label>Connectors:</label></textBox></presentation>
+      <presentation id="DisabledConnectors"><textBox refId="DisabledConnectors_Value"><label>Connectors:</label></textBox></presentation>
+      <presentation id="DisabledGrants"><textBox refId="DisabledGrants_Value"><label>Access:</label></textBox></presentation>
+      <presentation id="ExcludedPaths"><textBox refId="ExcludedPaths_Value"><label>Patterns:</label></textBox></presentation>
+      <presentation id="ExcludedWindows"><textBox refId="ExcludedWindows_Value"><label>Windows:</label></textBox></presentation>
+    </presentationTable>
+  </resources>
+</policyDefinitionResources>

@@ -347,13 +347,59 @@ describe("connector consent (Stage 6)", () => {
     agent.event(run_id, 8, "approval_resolved", { approval_id: "apr_c3", approved: true, by: "mara.okonjo@northwind-ops.com", kind: "consent" });
     await new Promise((r) => setTimeout(r, 100));
     const policy = (await admin.req("GET", "/api/admin/overview")).json.policy;
-    expect(policy.allowed_connectors).toEqual(["ticketing"]);
+    expect(policy.allowed_connectors).toEqual(["ticketing", "mail", "calendar", "documents", "ledger"]);
     await admin.req("PUT", "/api/admin/policy", { ...policy, allowed_connectors: [] });
     expect((await agent.next((m) => m.type === "policy" && m.policy.allowed_connectors.length === 0)).policy.allowed_connectors).toEqual([]);
     expect((await agent.next((m) => m.type === "grants" && m.reason === "no longer allowed by policy")).connectors).toEqual({});
     const actions = (await admin.req("GET", "/api/admin/audit?limit=300")).json.map((e: any) => e.action);
     expect(actions.filter((x: string) => x === "connector.consented")).toHaveLength(2);
     expect(actions.filter((x: string) => x === "connector.revoked")).toHaveLength(2);
+    agent.ws.close();
+  });
+});
+
+describe("saved workflows (Stage 6)", () => {
+  it("saves a request from a run, runs it again under its name, and keeps it private", async () => {
+    const mara = await signedIn("mara.okonjo@northwind-ops.com");
+    const agent = await FakeAgent.pair(mara);
+    agent.send({ type: "hello", device: { hostname: "NW-LT-4471", os: "Windows 11" }, capabilities: {} });
+    await new Promise((r) => setTimeout(r, 100));
+    const request = "Build the month-end close pack from the billing export in the Northwind drive.";
+    const first = (await mara.req("POST", "/api/runs", { request })).json.run_id;
+    await agent.next((m) => m.type === "start_run");
+
+    const saved = await mara.req("POST", "/api/workflows", { from_run: first, name: "Month-end close pack" });
+    expect(saved.status).toBe(200);
+    expect(saved.json).toMatchObject({ name: "Month-end close pack", request, created_from: first, runs: 0, last_run: null });
+    expect((await mara.req("POST", "/api/workflows", { from_run: first, name: "month-end CLOSE pack" })).status).toBe(409);
+    expect((await mara.req("POST", "/api/workflows", { name: "Empty" })).status).toBe(400);
+
+    // Running it sends its saved request to the agent, titled with its name.
+    const wid = saved.json.id;
+    const second = (await mara.req("POST", "/api/runs", { workflow_id: wid })).json.run_id;
+    const start = await agent.next((m) => m.type === "start_run" && m.run_id === second);
+    expect(start.request).toBe(request);
+    // Edited before running: the edit is what runs; the saved request is unchanged.
+    const third = (await mara.req("POST", "/api/runs", { workflow_id: wid, request: `${request} Use September.` })).json.run_id;
+    expect((await agent.next((m) => m.type === "start_run" && m.run_id === third)).request).toMatch(/Use September\.$/);
+    const detail = (await mara.req("GET", `/api/workflows/${wid}`)).json;
+    expect(detail.workflow).toMatchObject({ request, runs: 2 });
+    expect(detail.workflow.last_run.id).toBe(third);
+    expect(detail.runs.map((r: any) => [r.id, r.title])).toEqual([[third, "Month-end close pack"], [second, "Month-end close pack"]]);
+
+    // Someone else cannot see, run, change or delete it.
+    const admin = await signedIn("it.admin@northwind-ops.com");
+    expect((await admin.req("GET", "/api/workflows")).json).toEqual([]);
+    expect((await admin.req("GET", `/api/workflows/${wid}`)).status).toBe(404);
+    expect((await admin.req("POST", "/api/runs", { workflow_id: wid })).status).toBe(404);
+    expect((await admin.req("DELETE", `/api/workflows/${wid}`)).status).toBe(404);
+
+    expect((await mara.req("PUT", `/api/workflows/${wid}`, { name: "Month-end close" })).json.name).toBe("Month-end close");
+    expect((await mara.req("DELETE", `/api/workflows/${wid}`)).status).toBe(200);
+    expect((await mara.req("GET", "/api/workflows")).json).toEqual([]);
+    expect((await mara.req("POST", "/api/runs", { workflow_id: wid })).status).toBe(404);
+    const actions = (await admin.req("GET", "/api/admin/audit?limit=300")).json.map((e: any) => e.action);
+    for (const x of ["workflow.saved", "workflow.changed", "workflow.deleted"]) expect(actions).toContain(x);
     agent.ws.close();
   });
 });

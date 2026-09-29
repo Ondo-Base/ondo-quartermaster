@@ -47,6 +47,19 @@ gh attestation verify oci://ghcr.io/dandan002/ondo-quartermaster/control-plane:0
 gh attestation verify ondo_agent-0.1.0-py3-none-any.whl -R dandan002/ondo-quartermaster
 ```
 
+## Windows, by hand
+
+`windows.yml` runs only when someone starts it (Actions, **windows**, **Run
+workflow**). It is not a required check, because the Windows side has not been
+proven yet, and this is how to prove it. It does three things:
+
+- runs the agent tests on a GitHub-hosted Windows runner;
+- builds the Intune package with `deploy/windows/build.ps1`;
+- installs, detects and uninstalls that package, then uploads it as an
+  artifact.
+
+See `docs/deploy-windows.md`.
+
 ## Dependencies
 
 Dependabot opens grouped weekly PRs for npm, the agent's Python dependencies,

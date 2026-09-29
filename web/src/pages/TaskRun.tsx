@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { ApiError, EFFECT_LABELS, api, hhmm, isActive, useData, type Approval, type Capabilities, type Grants, type Run, type RunEvent } from "../api";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ApiError, EFFECT_LABELS, api, hhmm, isActive, useData, type Approval, type Capabilities, type Grants, type Run, type RunEvent, type Workflow } from "../api";
 import { BackHome, Crumbs, RailFoot, RailHead, TaskList, useShell } from "../components/Shell";
 import { Icon } from "../icons";
 
@@ -19,6 +19,8 @@ export function buildTimeline(events: RunEvent[]): Item[] {
   let turnText = "";
   let turn: { steps: Map<string, { title: string; tool: string; status: string; ts: number; detail: any }>; args: Map<string, any>; ts: number } | null = null;
   const diffs = new Map<string, string>();
+  const RESTARTED = "The desktop agent restarted during this step. The task carried on from its record; anything it was waiting on was asked again.";
+  let restarted = false;
 
   const flush = () => {
     if (!turn || turn.steps.size === 0) { turn = null; return; }
@@ -46,11 +48,12 @@ export function buildTimeline(events: RunEvent[]): Item[] {
     const diff = steps.map((s) => diffs.get(s.detail?.path ?? "")).find(Boolean);
     items.push({
       key: `t${turn.ts}`, title, ts: turn.ts, status: failed.length ? "error" : running ? "now" : "done",
-      note: turnText || undefined, chips: chips.length > 1 || tools.has("read_file") ? chips : undefined,
+      note: [turnText, restarted ? RESTARTED : ""].filter(Boolean).join(" ") || undefined, chips: chips.length > 1 || tools.has("read_file") ? chips : undefined,
       typed: typed.length ? typed : undefined, diff,
       error: failed.length ? String(failed[0].detail?.error ?? "").replace(/^Permission denied: /, "") : undefined,
     });
     turn = null;
+    restarted = false;
   };
 
   for (const e of events) {
@@ -62,6 +65,10 @@ export function buildTimeline(events: RunEvent[]): Item[] {
     } else if (e.type === "step" && turn) {
       const prev = turn.steps.get(e.data.call_id);
       turn.steps.set(e.data.call_id, { title: e.data.title, tool: e.data.tool, status: e.data.status, ts: prev?.ts ?? e.ts * 1000, detail: e.data.detail ?? prev?.detail });
+    } else if (e.type === "run_restored") {
+      // Mid-turn: said on that turn, whose steps carry on after it. Otherwise on its own.
+      if (turn) restarted = true;
+      else items.push({ key: `r${e.seq}`, title: "The desktop agent restarted", ts: e.ts * 1000, status: "done", note: RESTARTED });
     } else if (e.type === "diff_proposed") {
       diffs.set(e.data.path, e.data.diff);
     }
@@ -73,6 +80,7 @@ export function buildTimeline(events: RunEvent[]): Item[] {
 export function TaskRun() {
   const { id = "" } = useParams();
   const { openPrompt, toast } = useShell();
+  const nav = useNavigate();
   const { data, error, reload } = useData<Detail>(`/api/runs/${id}`, (_e, d) => d?.run_id === id || _e === "approval");
   const [tab, setTab] = useState<"steps" | "trajectory">("steps");
   const timeline = useMemo(() => buildTimeline(data?.events ?? []), [data]);
@@ -87,6 +95,18 @@ export function TaskRun() {
 
   async function act(path: string, body: unknown = {}) {
     try { await api(`/api/runs/${run.id}/${path}`, { body }); void reload(); } catch (e) { toast((e as ApiError).message); }
+  }
+
+  async function saveWorkflow() {
+    const name = window.prompt("Name this workflow", run.title)?.trim();
+    if (!name) return;
+    try {
+      const w = await api<Workflow>("/api/workflows", { body: { from_run: run.id, name } });
+      toast(`Saved “${w.name}”. It is in Saved workflows on the home page.`);
+      nav(`/app/workflows/${w.id}`);
+    } catch (e) {
+      toast((e as ApiError).message);
+    }
   }
 
   const statusLine = {
@@ -121,6 +141,9 @@ export function TaskRun() {
           {active && run.status !== "paused" && <button className="btn" onClick={() => act("pause")}>Pause</button>}
           {run.status === "paused" && <button className="btn" onClick={() => act("resume")}>Resume</button>}
           {active && <button className="btn" onClick={() => act("stop", { reason: "Taken over by the user" })}>Take over</button>}
+          {!active && (run.workflow_id
+            ? <Link to={`/app/workflows/${run.workflow_id}`} className="btn">Open the workflow</Link>
+            : <button className="btn" onClick={() => void saveWorkflow()}>Save as workflow</button>)}
           {!active && <button className="btn" onClick={() => openPrompt(run.request)}>Run again</button>}
         </header>
 

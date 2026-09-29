@@ -34,7 +34,9 @@ export interface AgentConnector {
   id: string; name: string; description: string; tools: { name: string; effect: string; does?: string }[];
   allowed_by_policy: boolean; consent: { by: string; at: number } | null;
 }
-export interface Agent { id: string; hostname: string; os: string; connected: boolean; grants: Grants; capabilities?: Capabilities; connectors?: AgentConnector[]; last_seen?: number }
+export interface Agent { id: string; hostname: string; os: string; connected: boolean; grants: Grants; capabilities?: Capabilities; connectors?: AgentConnector[]; last_seen?: number;
+  /** 0: a computer IT enrolled for this person, waiting for them to say it is theirs. */
+  confirmed?: number }
 export interface Me {
   user: { id: string; email: string; name: string; title: string; role: "member" | "admin" };
   org: { id: string; name: string; policy: Policy };
@@ -46,8 +48,14 @@ export interface Policy { excluded_paths: string[]; excluded_windows: string[]; 
 export interface Run {
   id: string; agent_id: string; user_id: string; request: string; title: string; status: string; answer: string; reason: string;
   model: string; created_at: number; updated_at: number; steps: { total: number; done: number; current: string };
-  pending_approvals: number; user?: { name: string; email: string }; agent_connected: boolean;
+  pending_approvals: number; user?: { name: string; email: string }; agent_connected: boolean; workflow_id?: string | null;
 }
+/** A request saved by name, to run again. Runs from it are ordinary runs. */
+export interface Workflow {
+  id: string; name: string; request: string; created_from: string | null; created_at: number; updated_at: number;
+  runs: number; last_run: { id: string; created_at: number; status: string } | null;
+}
+export const workflowMeta = (w: Workflow) => (w.last_run ? `Ran ${whenLabel(w.last_run.created_at).replace(/^Today, .*/, "today").replace(/^Yesterday$/, "yesterday")}` : "Not run yet");
 export interface RunEvent { seq: number; type: string; source: string; ts: number; hash?: string; data: any }
 export interface ApprovalValue { label: string; after: string; before: string | null; flagged?: boolean }
 export interface Approval {
@@ -66,7 +74,7 @@ let source: EventSource | null = null;
 function ensureStream() {
   if (source || typeof EventSource === "undefined") return;
   source = new EventSource("/api/stream");
-  for (const ev of ["run", "run_event", "approval", "agent", "grants", "screen"]) {
+  for (const ev of ["run", "run_event", "approval", "agent", "grants", "screen", "workflow"]) {
     source.addEventListener(ev, (e) => {
       let data: any = null;
       try { data = JSON.parse((e as MessageEvent).data); } catch { /* ignore */ }

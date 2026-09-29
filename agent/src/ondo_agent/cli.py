@@ -190,11 +190,31 @@ async def _pair(a) -> int:
     return 0
 
 
-async def _connect(a) -> int:
-    from .connection import ControlPlaneAgent, Credentials
+async def _enroll(a) -> int:
+    from .connection import enroll, signed_in_user
 
     cfg = _cfg(a.config)
-    agent = ControlPlaneAgent(cfg, Credentials.load(Path(a.credentials)))
+    agent_cfg = cfg.section("agent")
+    server = a.server or agent_cfg.get("control_plane")
+    tok = a.token or agent_cfg.get("enrollment_token")
+    if not (server and tok):
+        print("no control plane or enrollment token: set them in device management, or pass --server and --token")
+        return 2
+    creds = await enroll(server, tok, a.user or signed_in_user(), Path(a.credentials))
+    print(f"enrolled as agent {creds.agent_id}; confirm this computer in Ondo on the web to start")
+    return 0
+
+
+async def _connect(a) -> int:
+    from .connection import ControlPlaneAgent, Credentials, enroll, signed_in_user
+
+    cfg = _cfg(a.config)
+    creds_path = Path(a.credentials)
+    agent_cfg = cfg.section("agent")
+    if not creds_path.exists() and agent_cfg.get("control_plane") and agent_cfg.get("enrollment_token"):
+        # Deployed by device management: set itself up for whoever is signed in.
+        await enroll(agent_cfg["control_plane"], agent_cfg["enrollment_token"], signed_in_user(), creds_path)
+    agent = ControlPlaneAgent(cfg, Credentials.load(creds_path))
     print(f"connecting to {agent.creds.server} as {agent.creds.agent_id}")
     await agent.run_forever()
     return 0
@@ -233,6 +253,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--server", required=True)
     p.add_argument("--code", required=True)
     p.add_argument("--credentials", default=str(DEFAULT_CREDS))
+    p = sub.add_parser("enroll", help="set this computer up with the organisation's enrollment token")
+    p.add_argument("--server", default="", help="default: the ControlPlaneUrl device management set")
+    p.add_argument("--token", default="", help="default: the EnrollmentToken device management set")
+    p.add_argument("--user", default="", help="the signed-in person's work address (default: detected)")
+    p.add_argument("--credentials", default=str(DEFAULT_CREDS))
     p = sub.add_parser("connect", help="hold the connection to the control plane and run tasks from it")
     p.add_argument("--credentials", default=str(DEFAULT_CREDS))
     sub.add_parser(
@@ -247,7 +272,7 @@ def main(argv: list[str] | None = None) -> None:
         cal(argv[1:])
         return
     a = ap.parse_args(argv)
-    handlers = {"run": _run, "replay": _replay, "fork": _fork, "pair": _pair, "connect": _connect}
+    handlers = {"run": _run, "replay": _replay, "fork": _fork, "pair": _pair, "enroll": _enroll, "connect": _connect}
     sync = {
         "trajectory": _trajectory,
         "search": _search,

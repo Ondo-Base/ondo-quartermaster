@@ -30,4 +30,17 @@ describe("buildTimeline", () => {
     ]);
     expect(items[0]).toMatchObject({ title: "Operated Remote billing (2 actions)", typed: [{ label: "Annual value field in Remote billing", value: "193725" }] });
   });
+
+  it("shows a long operation's progress in place, and says when the agent restarted during it", () => {
+    const items = buildTimeline([
+      ev(0, "model_response", { text: "", tool_calls: [{ id: "r", name: "ledger_start_reconciliation", arguments: { period: "2026-09" } }] }),
+      ev(1, "step", { call_id: "r", title: "Reconciled receivables for 2026-09", tool: "ledger_start_reconciliation", status: "running" }),
+      ev(2, "step", { call_id: "r", title: "Reconciling receivables for 2026-09: 40% done", tool: "ledger_start_reconciliation", status: "running" }),
+      ev(3, "run_restored", { reason: "the desktop agent restarted", interrupted: ["r"] }),
+      ev(4, "step", { call_id: "r", title: "Reconciling receivables for 2026-09: 80% done", tool: "ledger_start_reconciliation", status: "running" }),
+    ]);
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ title: "Reconciling receivables for 2026-09: 80% done", status: "now" });
+    expect(items[0].note).toMatch(/^The desktop agent restarted during this step/);
+  });
 });

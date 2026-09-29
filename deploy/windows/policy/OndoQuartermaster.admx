@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Ondo Quartermaster: settings for Intune (import as a custom ADMX, or ingest
+  through the Settings Catalog) and Group Policy. Every value lands under
+  HKLM\Software\Policies\Ondo\Quartermaster, which the agent reads at start and
+  applies on top of the organisation's policy. They only narrow what the agent may
+  do; see agent/src/ondo_agent/managed.py.
+-->
+<policyDefinitions xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   revision="1.0" schemaVersion="1.0"
+                   xmlns="http://schemas.microsoft.com/GroupPolicy/2006/07/PolicyDefinitions">
+  <policyNamespaces>
+    <target prefix="ondo" namespace="Ondo.Policies.Quartermaster" />
+    <using prefix="windows" namespace="Microsoft.Policies.Windows" />
+  </policyNamespaces>
+  <resources minRequiredRevision="1.0" />
+  <supportedOn>
+    <definitions>
+      <definition name="SUPPORTED_Ondo_1" displayName="$(string.SUPPORTED_Ondo_1)" />
+    </definitions>
+  </supportedOn>
+  <categories>
+    <category name="Ondo" displayName="$(string.Ondo)" />
+    <category name="OndoConnection" displayName="$(string.OndoConnection)">
+      <parentCategory ref="Ondo" />
+    </category>
+    <category name="OndoAccess" displayName="$(string.OndoAccess)">
+      <parentCategory ref="Ondo" />
+    </category>
+  </categories>
+  <policies>
+    <policy name="ControlPlaneUrl" class="Machine" displayName="$(string.ControlPlaneUrl)"
+            explainText="$(string.ControlPlaneUrl_Explain)" presentation="$(presentation.ControlPlaneUrl)"
+            key="Software\Policies\Ondo\Quartermaster">
+      <parentCategory ref="OndoConnection" />
+      <supportedOn ref="SUPPORTED_Ondo_1" />
+      <elements>
+        <text id="ControlPlaneUrl_Value" valueName="ControlPlaneUrl" required="true" maxLength="512" />
+      </elements>
+    </policy>
+    <policy name="EnrollmentToken" class="Machine" displayName="$(string.EnrollmentToken)"
+            explainText="$(string.EnrollmentToken_Explain)" presentation="$(presentation.EnrollmentToken)"
+            key="Software\Policies\Ondo\Quartermaster">
+      <parentCategory ref="OndoConnection" />
+      <supportedOn ref="SUPPORTED_Ondo_1" />
+      <elements>
+        <text id="EnrollmentToken_Value" valueName="EnrollmentToken" required="true" maxLength="256" />
+      </elements>
+    </policy>
+    <policy name="AllowedConnectors" class="Machine" displayName="$(string.AllowedConnectors)"
+            explainText="$(string.AllowedConnectors_Explain)" presentation="$(presentation.AllowedConnectors)"
+            key="Software\Policies\Ondo\Quartermaster">
+      <parentCategory ref="OndoAccess" />
+      <supportedOn ref="SUPPORTED_Ondo_1" />
+      <elements>
+        <text id="AllowedConnectors_Value" valueName="AllowedConnectors" maxLength="1024" />
+      </elements>
+    </policy>
+    <policy name="DisabledConnectors" class="Machine" displayName="$(string.DisabledConnectors)"
+            explainText="$(string.DisabledConnectors_Explain)" presentation="$(presentation.DisabledConnectors)"
+            key="Software\Policies\Ondo\Quartermaster">
+      <parentCategory ref="OndoAccess" />
+      <supportedOn ref="SUPPORTED_Ondo_1" />
+      <elements>
+        <text id="DisabledConnectors_Value" valueName="DisabledConnectors" maxLength="1024" />
+      </elements>
+    </policy>
+    <policy name="DisabledGrants" class="Machine" displayName="$(string.DisabledGrants)"
+            explainText="$(string.DisabledGrants_Explain)" presentation="$(presentation.DisabledGrants)"
+            key="Software\Policies\Ondo\Quartermaster">
+      <parentCategory ref="OndoAccess" />
+      <supportedOn ref="SUPPORTED_Ondo_1" />
+      <elements>
+        <text id="DisabledGrants_Value" valueName="DisabledGrants" maxLength="64" />
+      </elements>
+    </policy>
+    <policy name="ExcludedPaths" class="Machine" displayName="$(string.ExcludedPaths)"
+            explainText="$(string.ExcludedPaths_Explain)" presentation="$(presentation.ExcludedPaths)"
+            key="Software\Policies\Ondo\Quartermaster">
+      <parentCategory ref="OndoAccess" />
+      <supportedOn ref="SUPPORTED_Ondo_1" />
+      <elements>
+        <text id="ExcludedPaths_Value" valueName="ExcludedPaths" maxLength="4096" />
+      </elements>
+    </policy>
+    <policy name="ExcludedWindows" class="Machine" displayName="$(string.ExcludedWindows)"
+            explainText="$(string.ExcludedWindows_Explain)" presentation="$(presentation.ExcludedWindows)"
+            key="Software\Policies\Ondo\Quartermaster">
+      <parentCategory ref="OndoAccess" />
+      <supportedOn ref="SUPPORTED_Ondo_1" />
+      <elements>
+        <text id="ExcludedWindows_Value" valueName="ExcludedWindows" maxLength="4096" />
+      </elements>
+    </policy>
+    <policy name="DisableScreenWatching" class="Machine" displayName="$(string.DisableScreenWatching)"
+            explainText="$(string.DisableScreenWatching_Explain)" key="Software\Policies\Ondo\Quartermaster"
+            valueName="DisableScreenWatching">
+      <parentCategory ref="OndoAccess" />
+      <supportedOn ref="SUPPORTED_Ondo_1" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+    <policy name="DisablePixels" class="Machine" displayName="$(string.DisablePixels)"
+            explainText="$(string.DisablePixels_Explain)" key="Software\Policies\Ondo\Quartermaster"
+            valueName="DisablePixels">
+      <parentCategory ref="OndoAccess" />
+      <supportedOn ref="SUPPORTED_Ondo_1" />
+      <enabledValue><decimal value="1" /></enabledValue>
+      <disabledValue><decimal value="0" /></disabledValue>
+    </policy>
+  </policies>
+</policyDefinitions>
