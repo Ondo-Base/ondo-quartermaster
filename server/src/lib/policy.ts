@@ -9,6 +9,8 @@ export interface OrgPolicy {
   writes_require_approval: boolean;
   // The only web origins the agent's browser may open.
   allowed_origins: string[];
+  // Connectors people may allow for themselves. Nothing else can be used.
+  allowed_connectors: string[];
 }
 
 export const DEFAULT_POLICY: OrgPolicy = {
@@ -17,6 +19,7 @@ export const DEFAULT_POLICY: OrgPolicy = {
   disabled_grants: [],
   writes_require_approval: true,
   allowed_origins: [],
+  allowed_connectors: [],
 };
 
 export function normalisePolicy(p: Partial<OrgPolicy> | undefined): OrgPolicy {
@@ -27,6 +30,7 @@ export function normalisePolicy(p: Partial<OrgPolicy> | undefined): OrgPolicy {
     disabled_grants: strs(p?.disabled_grants).filter((g) => ["files", "screen", "input"].includes(g)),
     writes_require_approval: p?.writes_require_approval !== false,
     allowed_origins: strs(p?.allowed_origins).filter((o) => /^https?:\/\/[^/]+$/.test(o.replace(/\/$/, ""))).map((o) => o.replace(/\/$/, "")),
+    allowed_connectors: [...new Set(strs(p?.allowed_connectors).map((c) => c.trim().toLowerCase()).filter((c) => /^[a-z0-9_-]{1,40}$/.test(c)))],
   };
 }
 

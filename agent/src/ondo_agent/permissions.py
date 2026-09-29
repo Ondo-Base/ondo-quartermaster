@@ -8,6 +8,10 @@ asked to respect, which is why it holds identically whatever model is loaded.
   mid-run, and a revocation stops any tool that needs it at its next check.
 - A policy layer set by the administrator: excluded paths and windows are not
   grantable by the user at all, and every time an exclusion bites it is logged.
+- Connectors (mail, ticketing …) are not a fourth grant. Each is consented to on
+  its own, by the person, the first time a run wants it, and only if the
+  administrator's policy lists it in ``allowed_connectors``. A consent is revocable
+  like a grant, and revoking it stops the runs that were using it.
 - ``stop()`` is the kill switch. ``release_input()`` is what Escape-twice calls;
   it runs in the agent process and never goes through the model.
 """
@@ -58,6 +62,8 @@ class Policy:
     # Grants the organisation does not allow at all (e.g. ["input"]).
     disabled_grants: list[str] = field(default_factory=list)
     writes_require_approval: bool = True
+    # Connectors people may consent to. Anything not listed cannot be used at all.
+    allowed_connectors: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> Policy:
@@ -67,7 +73,17 @@ class Policy:
             excluded_windows=list(d.get("excluded_windows", [])),
             disabled_grants=list(d.get("disabled_grants", [])),
             writes_require_approval=bool(d.get("writes_require_approval", True)),
+            allowed_connectors=[str(c) for c in d.get("allowed_connectors", [])],
         )
+
+
+@dataclass
+class Consent:
+    """A person's yes to one connector, until they or an administrator take it back."""
+
+    connector: str
+    by: str = ""
+    at: float = 0.0
 
 
 def glob_to_regex(pattern: str) -> re.Pattern[str]:
@@ -103,12 +119,54 @@ class Access:
     folder: str | None = None
 
 
+class ConsentStore:
+    """Consents kept on the device, for runs with no control plane. With one, the
+    control plane is the record and sends consents with the grants."""
+
+    def __init__(self, path: Path):
+        self.path = Path(path)
+
+    def load(self) -> dict[str, Consent]:
+        import json
+
+        try:
+            raw = json.loads(self.path.read_text())
+        except (OSError, ValueError):
+            return {}
+        return {k: Consent(k, str(v.get("by", "")), float(v.get("at", 0))) for k, v in raw.items()}
+
+    def save(self, consents: dict[str, Consent]) -> None:
+        import json
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({k: {"by": c.by, "at": c.at} for k, c in consents.items()}, indent=2))
+        tmp.replace(self.path)
+
+    def follow(self, broker: PermissionBroker) -> None:
+        def changed(kind: str, data: dict[str, Any]) -> None:
+            if str(data.get("kind", "")).startswith("connector:"):
+                self.save(broker.consents)
+
+        broker.on_change(changed)
+
+
 Listener = Callable[[str, dict[str, Any]], None]
 
 
 class PermissionBroker:
-    def __init__(self, grants: dict[str, Grant] | None = None, policy: Policy | None = None):
+    def __init__(
+        self,
+        grants: dict[str, Grant] | None = None,
+        policy: Policy | None = None,
+        consents: dict[str, Consent] | None = None,
+    ):
         self.policy = policy or Policy()
+        self.consents: dict[str, Consent] = {
+            k: v for k, v in (consents or {}).items() if k in self.policy.allowed_connectors
+        }
+        # Connectors the person said no to in this run: not asked again until the next run.
+        self.refused: set[str] = set()
         self.grants: dict[str, Grant] = {k: Grant(k) for k in GRANT_KINDS}  # type: ignore[arg-type]
         for k, g in (grants or {}).items():
             self.grants[k] = g
@@ -172,7 +230,51 @@ class PermissionBroker:
         self.revoke("input", by="user", reason="escape_twice")
 
     def snapshot(self) -> dict[str, Any]:
-        return {k: {"granted": g.granted, "scope": list(g.scope)} for k, g in self.grants.items()}
+        out: dict[str, Any] = {k: {"granted": g.granted, "scope": list(g.scope)} for k, g in self.grants.items()}
+        out["connectors"] = sorted(self.consents)
+        return out
+
+    # -- connectors ---------------------------------------------------------------
+
+    def connector_allowed(self, connector: str) -> bool:
+        return connector in self.policy.allowed_connectors
+
+    def is_consented(self, connector: str) -> bool:
+        return self.connector_allowed(connector) and connector in self.consents
+
+    def ensure_connector(self, connector: str, name: str = "") -> None:
+        """Raise unless the run is live and policy lets this connector be used at all.
+        Consent is asked for separately, by the connector tools."""
+        self.ensure_running()
+        if not self.connector_allowed(connector):
+            raise PermissionDenied(
+                f"{name or connector} is not allowed by your administrator",
+                kind="connector",
+                reason="excluded_by_policy",
+                target=connector,
+            )
+
+    def consent(self, connector: str, *, by: str = "user", at: float | None = None) -> Consent:
+        import time
+
+        if not self.connector_allowed(connector):
+            raise PermissionDenied(
+                f"{connector} is not allowed by your administrator",
+                kind="connector",
+                reason="excluded_by_policy",
+                target=connector,
+            )
+        c = Consent(connector, by, at if at is not None else time.time())
+        self.consents[connector] = c
+        self.refused.discard(connector)
+        self._emit("granted", {"kind": f"connector:{connector}", "scope": [], "by": by})
+        return c
+
+    def revoke_connector(self, connector: str, *, by: str = "user", reason: str = "") -> bool:
+        if self.consents.pop(connector, None) is None:
+            return False
+        self._emit("revoked", {"kind": f"connector:{connector}", "by": by, "reason": reason})
+        return True
 
     # -- kill switch ------------------------------------------------------------
 

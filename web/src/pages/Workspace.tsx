@@ -25,7 +25,7 @@ export function Workspace() {
   async function approve(a: Approval) {
     try {
       await api(`/api/approvals/${a.id}`, { body: { approved: true } });
-      toast("Approved. Ondo is carrying on.");
+      toast(a.kind === "consent" ? "Allowed. Ondo is carrying on." : "Approved. Ondo is carrying on.");
       void reloadApprovals();
     } catch (e) {
       toast((e as ApiError).message);
@@ -75,13 +75,13 @@ export function Workspace() {
               <div key={a.id}>
                 {i > 0 && <div className="divider" />}
                 <div className="row" style={{ padding: "16px 20px", gap: 16 }}>
-                  <span className="icon-square"><Icon name={a.effects.includes("sends_externally") ? "mail" : a.effects.includes("file_write") ? "file" : "card"} size={17} /></span>
+                  <span className="icon-square"><Icon name={a.kind === "consent" ? "plug" : a.effects.includes("sends_externally") ? "mail" : a.effects.includes("file_write") ? "file" : "card"} size={17} /></span>
                   <span className="grow col" style={{ gap: 2 }}>
                     <span style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>{a.title}</span>
                     <span className="caption">{a.run_title} · {changedLine(a)}</span>
                   </span>
                   <Link to={`/app/runs/${a.run_id}`} className="btn btn-sm">Review</Link>
-                  <button className="btn btn-sm btn-primary" onClick={() => approve(a)}>Approve</button>
+                  <button className="btn btn-sm btn-primary" onClick={() => approve(a)}>{a.kind === "consent" ? "Allow" : "Approve"}</button>
                 </div>
               </div>
             ))}
@@ -141,6 +141,7 @@ function Stat({ n, label }: { n: number | undefined; label: string }) {
 }
 
 function changedLine(a: Approval): string {
+  if (a.kind === "consent") return "First use of a connector: allow it?";
   const n = a.values.filter((v) => v.before != null).length;
   return n ? `${n} value${n === 1 ? "" : "s"} change${n === 1 ? "s" : ""}` : a.summary;
 }

@@ -29,7 +29,12 @@ export type Grants = Record<GrantKind, Grant>;
 export interface Capabilities { files?: boolean; browser?: boolean; desktop?: boolean; screen?: boolean; input?: boolean; pixels?: boolean; desktop_backend?: string | null }
 /** Which shared window is in front, as the agent reports it. Only its name. */
 export interface ScreenState { agent_id: string; available: boolean; pixels: boolean; screen: { window: string | null; title: string | null; watching: boolean; at: number } | null }
-export interface Agent { id: string; hostname: string; os: string; connected: boolean; grants: Grants; capabilities?: Capabilities; last_seen?: number }
+/** A connector the agent has, whether policy lets people allow it, and who did. */
+export interface AgentConnector {
+  id: string; name: string; description: string; tools: { name: string; effect: string; does?: string }[];
+  allowed_by_policy: boolean; consent: { by: string; at: number } | null;
+}
+export interface Agent { id: string; hostname: string; os: string; connected: boolean; grants: Grants; capabilities?: Capabilities; connectors?: AgentConnector[]; last_seen?: number }
 export interface Me {
   user: { id: string; email: string; name: string; title: string; role: "member" | "admin" };
   org: { id: string; name: string; policy: Policy };
@@ -37,7 +42,7 @@ export interface Me {
   device: { id: string; name: string; os: string; managed: number; trusted_until: number } | null;
   agents: Agent[];
 }
-export interface Policy { excluded_paths: string[]; excluded_windows: string[]; disabled_grants: string[]; writes_require_approval: boolean; allowed_origins?: string[] }
+export interface Policy { excluded_paths: string[]; excluded_windows: string[]; disabled_grants: string[]; writes_require_approval: boolean; allowed_origins?: string[]; allowed_connectors?: string[] }
 export interface Run {
   id: string; agent_id: string; user_id: string; request: string; title: string; status: string; answer: string; reason: string;
   model: string; created_at: number; updated_at: number; steps: { total: number; done: number; current: string };
@@ -48,6 +53,8 @@ export interface ApprovalValue { label: string; after: string; before: string | 
 export interface Approval {
   id: string; run_id: string; title: string; summary: string; effects: string[]; values: ApprovalValue[]; diff: string | null;
   tool: string; status: string; resolved_by: string | null; resolved_at: number | null; note: string; created_at: number; run_title?: string;
+  /** "consent": a connector's first use, asking whether Ondo may use it at all. */
+  kind?: "effect" | "consent"; connector?: string | null;
 }
 
 // -- live updates -------------------------------------------------------------------------

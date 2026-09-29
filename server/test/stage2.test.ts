@@ -298,3 +298,62 @@ describe("screen watching (Stage 5)", () => {
     expect((await mara.req("GET", `/api/agents/${agent.id}/screen`)).json.screen).toBeNull();
   });
 });
+
+describe("connector consent (Stage 6)", () => {
+  it("records a person's yes to a connector, bounded by policy, and takes it back", async () => {
+    const mara = await signedIn("mara.okonjo@northwind-ops.com");
+    const agent = await FakeAgent.pair(mara);
+    const ticketing = { id: "ticketing", name: "Ticketing", description: "The service desk.", tools: [{ name: "search_tickets", effect: "read" }] };
+    const billing = { id: "billing", name: "Billing", description: "Invoices.", tools: [{ name: "approve", effect: "move_money" }] };
+    agent.send({ type: "hello", device: { hostname: "NW-LT-4471", os: "Windows 11" }, capabilities: { screen: true, desktop: true, connectors: [ticketing, billing] } });
+    await new Promise((r) => setTimeout(r, 100));
+    let me = (await mara.req("GET", "/api/me")).json;
+    expect(me.agents[0].connectors.map((c: any) => [c.id, c.allowed_by_policy, c.consent])).toEqual([["ticketing", true, null], ["billing", false, null]]);
+
+    const run_id = (await mara.req("POST", "/api/runs", { request: "Reply to Halleck's ticket." })).json.run_id;
+    await agent.next((m) => m.type === "start_run");
+    agent.event(run_id, 0, "run_started", { request: "Reply", profile: "p", model: "m" });
+    agent.event(run_id, 1, "approval_requested", { id: "apr_c1", title: "Let Ondo use Ticketing?", summary: "", effects: [], values: [], kind: "consent", connector: "ticketing" });
+    agent.event(run_id, 2, "approval_requested", { id: "apr_c2", title: "Let Ondo use Billing?", summary: "", effects: [], values: [], kind: "consent", connector: "billing" });
+    agent.event(run_id, 3, "approval_requested", { id: "apr_e1", title: "Reply on NW-1042", summary: "", effects: ["sends_externally"], values: [] });
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await mara.req("POST", "/api/approvals/apr_c1", { approved: true })).status).toBe(200);
+    expect((await agent.next((m) => m.type === "approval")).approval_id).toBe("apr_c1");
+    agent.event(run_id, 4, "approval_resolved", { approval_id: "apr_c1", approved: true, by: "mara.okonjo@northwind-ops.com", kind: "consent" });
+    // A connector policy does not allow is not recorded even if the device says yes,
+    agent.event(run_id, 5, "approval_resolved", { approval_id: "apr_c2", approved: true, by: "mara.okonjo@northwind-ops.com", kind: "consent" });
+    // and an effect approval cannot be passed off as a consent.
+    agent.event(run_id, 6, "approval_resolved", { approval_id: "apr_e1", approved: true, by: "mara.okonjo@northwind-ops.com", kind: "consent", connector: "billing" });
+    await new Promise((r) => setTimeout(r, 150));
+    me = (await mara.req("GET", "/api/me")).json;
+    expect(me.agents[0].connectors[0].consent).toMatchObject({ by: "mara.okonjo@northwind-ops.com" });
+    expect(me.agents[0].connectors[1].consent).toBeNull();
+    // The agent is told the consent is recorded.
+    expect((await agent.next((m) => m.type === "grants" && m.connectors?.ticketing)).connectors.ticketing.by).toBe("mara.okonjo@northwind-ops.com");
+    const consentApproval = (await mara.req("GET", `/api/runs/${run_id}`)).json.approvals.find((x: any) => x.id === "apr_c1");
+    expect(consentApproval).toMatchObject({ kind: "consent", connector: "ticketing" });
+
+    // An administrator takes it back; the agent hears at once.
+    const admin = await signedIn("it.admin@northwind-ops.com");
+    expect((await admin.req("DELETE", `/api/agents/${agent.id}/connectors/ticketing`)).status).toBe(200);
+    const revoked = await agent.next((m) => m.type === "grants" && m.reason === "revoked by an administrator");
+    expect(revoked.connectors).toEqual({});
+    expect((await admin.req("DELETE", `/api/agents/${agent.id}/connectors/ticketing`)).status).toBe(404);
+
+    // Consent again, then policy drops the connector: every consent to it goes.
+    agent.event(run_id, 7, "approval_requested", { id: "apr_c3", title: "Let Ondo use Ticketing?", summary: "", effects: [], values: [], kind: "consent", connector: "ticketing" });
+    await new Promise((r) => setTimeout(r, 100));
+    await mara.req("POST", "/api/approvals/apr_c3", { approved: true });
+    agent.event(run_id, 8, "approval_resolved", { approval_id: "apr_c3", approved: true, by: "mara.okonjo@northwind-ops.com", kind: "consent" });
+    await new Promise((r) => setTimeout(r, 100));
+    const policy = (await admin.req("GET", "/api/admin/overview")).json.policy;
+    expect(policy.allowed_connectors).toEqual(["ticketing"]);
+    await admin.req("PUT", "/api/admin/policy", { ...policy, allowed_connectors: [] });
+    expect((await agent.next((m) => m.type === "policy" && m.policy.allowed_connectors.length === 0)).policy.allowed_connectors).toEqual([]);
+    expect((await agent.next((m) => m.type === "grants" && m.reason === "no longer allowed by policy")).connectors).toEqual({});
+    const actions = (await admin.req("GET", "/api/admin/audit?limit=300")).json.map((e: any) => e.action);
+    expect(actions.filter((x: string) => x === "connector.consented")).toHaveLength(2);
+    expect(actions.filter((x: string) => x === "connector.revoked")).toHaveLength(2);
+    agent.ws.close();
+  });
+});
