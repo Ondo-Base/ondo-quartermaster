@@ -1,8 +1,40 @@
 # Capability profiles. The harness reads these and adapts; the loop never branches
 # on a provider. Adding a provider is a new entry here.
 #
-# Model names are aliases resolved by the gateway (see deploy/litellm.yaml), so the
-# agent config never names a vendor's model. Point ORCHESTRATOR_* at your own.
+# The `gateway` profile names aliases resolved by a self-hosted LiteLLM (see
+# deploy/litellm.yaml), so it never mentions a vendor's model. The `openrouter`
+# profiles are the exception we accept for now: OpenRouter routes on its own
+# `provider/model` slugs, so the slug lives here, overridable by environment.
+
+openrouter:
+  # The default while we are on OpenRouter: one OpenAI-compatible endpoint in
+  # front of every provider, so switching models is a slug, not a deployment.
+  # Model slugs are OpenRouter's own (`provider/model`), not gateway aliases.
+  adapter: openai_chat
+  base_url: ${ONDO_OPENROUTER_URL:-https://openrouter.ai/api/v1}
+  api_key_env: OPENROUTER_API_KEY
+  model: ${ONDO_ORCHESTRATOR_MODEL:-anthropic/claude-sonnet-5}
+  supports_vision: true
+  # The openai_chat adapter sends no cache_control breakpoints, so prefix
+  # caching is whatever the provider does on its own.
+  supports_prefix_cache: none
+  reasoning_control: effort
+  parallel_tool_calls: true
+  context_window: 1000000
+  max_output_tokens: 8192
+
+openrouter-fast:
+  # The cheap seat: extraction, screening, and a fallback for the orchestrator.
+  adapter: openai_chat
+  base_url: ${ONDO_OPENROUTER_URL:-https://openrouter.ai/api/v1}
+  api_key_env: OPENROUTER_API_KEY
+  model: ${ONDO_EXTRACTOR_MODEL:-anthropic/claude-haiku-4.5}
+  supports_vision: true
+  supports_prefix_cache: none
+  reasoning_control: none
+  parallel_tool_calls: true
+  context_window: 200000
+  max_output_tokens: 8192
 
 gateway:
   # Any OpenAI-compatible endpoint: a self-hosted LiteLLM (recommended), OpenRouter,

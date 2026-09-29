@@ -7,8 +7,10 @@ agent:
 
 models:
   profiles_file: config/profiles.yaml
-  orchestrator: ${ONDO_MODEL_PROFILE:-demo}
-  fallbacks: []
+  # OpenRouter for now; set ONDO_MODEL_PROFILE=demo for the scripted stand-in
+  # that needs no key, or =gateway once a LiteLLM is in front.
+  orchestrator: ${ONDO_MODEL_PROFILE:-openrouter}
+  fallbacks: [openrouter-fast]
 
 # The user's grants on this device. When connected, the control plane sends these.
 grants:

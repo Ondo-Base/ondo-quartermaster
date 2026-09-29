@@ -73,6 +73,7 @@ npm run dev --workspace web                                        # http://loca
 cd agent && .venv/bin/ondo-agent portal &                          # http://127.0.0.1:8765
 .venv/bin/ondo-agent demo-data demo
 cp ondo.example.yaml ondo.yaml                                     # set ONDO_CHROMIUM if needed
+#    (ONDO_MODEL_PROFILE=demo keeps this scripted; the config defaults to openrouter)
 ```
 
 Sign in as `mara.okonjo@northwind-ops.com` (password `quartermaster-demo`, or use
@@ -98,9 +99,12 @@ and click for you", then try:
 Sign in as `it.admin@northwind-ops.com` for the admin console: revoke a grant
 while a task waits at an approval and watch the run stop.
 
-With a real model: run a LiteLLM gateway (`deploy/litellm.yaml`), set
-`ONDO_MODEL_PROFILE=gateway` and `ONDO_GATEWAY_URL`/`ONDO_GATEWAY_KEY`, or use the
-`messages` profile. The terminal works without the control plane:
+With a real model: the default profile is `openrouter`, so a single
+`OPENROUTER_API_KEY` is enough (see `.env.example`; the slugs are
+`ONDO_ORCHESTRATOR_MODEL` and `ONDO_EXTRACTOR_MODEL`). To move off it later, run a
+LiteLLM gateway (`deploy/litellm.yaml`) with `ONDO_MODEL_PROFILE=gateway` and
+`ONDO_GATEWAY_URL`/`ONDO_GATEWAY_KEY`, or use the `messages` profile. The terminal
+works without the control plane:
 
 ```sh
 .venv/bin/ondo-agent run "Why did row 14 not match the contract?"   # approvals asked on stdin
