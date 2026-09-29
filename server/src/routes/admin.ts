@@ -127,6 +127,33 @@ export function adminRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
 
   app.post("/api/admin/siem/flush", { preHandler: admin }, async () => ({ sent: await forwardOnce(db) }));
 
+  // Enrollment tokens: what IT puts in its device management (Intune, Group Policy)
+  // so agents set themselves up. Shown once; each person still confirms their computer.
+  app.get("/api/admin/enrollment-tokens", { preHandler: admin }, async (req) => {
+    return all(db, "SELECT id, label, created_by, created_at, revoked_at, uses FROM enrollment_tokens WHERE org_id = ? ORDER BY created_at DESC",
+      req.authed!.user.org_id);
+  });
+
+  app.post<{ Body: { label?: string } }>("/api/admin/enrollment-tokens", { preHandler: admin }, async (req) => {
+    const a = req.authed!;
+    const t = `ondo_enr_${token(32)}`;
+    const tid = id("enr");
+    const label = String(req.body?.label ?? "").trim().slice(0, 80) || "Device management";
+    run(db, "INSERT INTO enrollment_tokens (id, token_hash, org_id, label, created_by, created_at) VALUES (?,?,?,?,?,?)",
+      tid, sha256(t), a.user.org_id, label, a.user.email, now());
+    audit(db, a.user.org_id, `user:${a.user.email}`, "admin.enrollment_token_created", tid, { label });
+    return { id: tid, label, token: t, note: "Shown once. Put it in the EnrollmentToken setting of your device management." };
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/admin/enrollment-tokens/:id", { preHandler: admin }, async (req, reply) => {
+    const a = req.authed!;
+    const gone = run(db, "UPDATE enrollment_tokens SET revoked_at = ? WHERE id = ? AND org_id = ? AND revoked_at IS NULL",
+      now(), req.params.id, a.user.org_id).changes;
+    if (!gone) return reply.code(404).send({ error: "no such token" });
+    audit(db, a.user.org_id, `user:${a.user.email}`, "admin.enrollment_token_revoked", req.params.id);
+    return { revoked: req.params.id };
+  });
+
   app.post<{ Body: { label?: string } }>("/api/admin/scim-tokens", { preHandler: admin }, async (req) => {
     const a = req.authed!;
     const t = token(32);

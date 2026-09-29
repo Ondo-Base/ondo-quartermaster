@@ -4,7 +4,7 @@ An on-computer assistant for enterprise operations teams: it reads the files a
 team already works in, operates web portals through their accessibility tree, and
 stops for a person before anything is submitted, sent, overwritten or paid.
 
-This repository implements **Stages 0 to 5, and the first part of Stage 6** of
+This repository implements **Stages 0 to 6** of
 [`docs/implementation-plan.md`](docs/implementation-plan.md) against the screens in
 [`design/`](design/README.md).
 
@@ -118,6 +118,13 @@ and click for you", then try:
   inviting Priya each stop for approval, and her address is flagged as outside
   the organisation. The team-sites connector works the same way: changing a
   shared document shows a diff and who changed it last.
+- *Reconcile receivables for September.* Uses the sample ledger connector: the
+  reconciliation runs on the ledger's side and the step shows its progress. Kill
+  the agent while it runs and start it again: the task carries on and waits for
+  the same reconciliation.
+- **Deploying with Intune.** See `docs/deploy-windows.md`: an enrollment token
+  from the admin console, the ADMX policy template, and the Win32 app built by
+  `deploy/windows/build.ps1`.
 - **Saved workflows.** On a finished task, **Save as workflow** keeps its request
   under a name. It then appears under **Saved workflows** in the rail and as a
   suggestion in the prompt overlay. Running one starts an ordinary task: same
@@ -144,7 +151,7 @@ works without the control plane:
 ## Tests
 
 ```sh
-cd agent && .venv/bin/pytest -q      # 50 tests: stages 0 to 6, and the control-plane integration
+cd agent && .venv/bin/pytest -q      # stages 0 to 6, and the control-plane integration
 npm test                             # control plane (vitest) and web
 npm run typecheck
 ```
@@ -177,7 +184,7 @@ rules an admin needs to switch on to enforce them.
 | 3 · The browser | A task spanning the document store and a web portal completes with no screenshots, passing with a text-only model | `test_stage3.py` — contracts from the granted folder keyed into the portal through the accessibility tree, one approval with exact before/after values, no images anywhere, origins enforced before and after navigation |
 | 4 · Semantic desktop control | A legacy app driven by element name, not coordinates, surviving a moved window and a rescaled display, picking its target without an orchestrator turn | `test_stage4.py` — a GTK billing app on a virtual display, run at 1× and 2× scale and moved and resized mid-task; the model names targets in words and the decision layer picks them; the submit is gated with the exact value; Escape twice (real keypresses) takes the keyboard back and stops the run. `test_integration.py` runs the same task through the control plane |
 | 5 · Pixels, as the floor | A Citrix or remote-desktop window can be operated; the harness picks pixels only after trying the ladder; grounding can be switched to a locally hosted model without touching the executor | `test_stage5.py`: a window that is one canvas (the Citrix stand-in) operated at 1x and 2x, moved and resized mid-task, by a text-only model naming targets and by a vision model giving pixels in an 800-pixel screenshot. `screen_act` refuses until `desktop_inspect` found nothing to act on. The submit is gated with the typed value, and Escape is never sent. The same task passes with grounding pointed at a local UI-TARS-style endpoint by configuration alone. `test_integration.py` covers screen watching and "Ask about this screen" through the control plane |
-| 6 · Connectors and scale (first part) | IT can deploy through Intune and control MCP access from Settings without talking to us. **Built so far:** per-connector consent; ticketing, mail, calendar and team-sites connectors; saved workflows | `test_stage6.py`, against a real MCP server over stdio. The first use of Ticketing asks the person once, and the answer is remembered until revoked; no is final for the run. A connector policy does not allow is never started or offered. A public reply is gated as sending externally, with the exact text; an update shows before and after. A ticket carrying an injection is flagged and taints the run. `test_stage6_workplace.py`: a reply by mail and an invitation by calendar, each gated as sending externally with outside addresses flagged; drafts and events on your own calendar need no approval unless the run is tainted; a shared-document change shows its diff; an email carrying instructions taints the run. `server/test/stage2.test.ts`: a workflow saved from a task runs its request again under its name (or an edited request, once), lists its runs, and is private to its owner. `test_integration.py`: consent given from the web and recorded by the control plane; revoking it from the web stops a run that was using it. Deployment through Intune, the Windows ODR, saved workflows and the other connectors are not built yet |
+| 6 · Connectors and scale | IT can deploy through Intune and control MCP access from Settings without talking to us. **Built:** per-connector consent; ticketing, mail, calendar, team-sites and ledger connectors; saved workflows; long-running tasks; managed policy, enrollment and Intune packaging. **Not built:** the ODR | `test_stage6.py`, `test_stage6_workplace.py`, against real MCP servers over stdio: consent once per connector, remembered until revoked; connectors policy does not allow are never started; every change gated with its exact values (recipients outside the organisation flagged, before and after, diffs); a ticket or email carrying instructions taints the run. `test_stage6_long.py`: a reconciliation waited for with progress; after the agent is killed, a new process waits for the same operation rather than starting another, and says honestly what became of each interrupted call. `test_stage6_managed.py`: device-management settings only narrow, and the ADMX template writes exactly what the agent reads. `test_integration.py`: consent and revocation from the web; a run surviving an agent restart through the control plane; an enrolled agent that does nothing until its person confirms it. `server/test/stage2.test.ts`: saved workflows |
 
 ## What is not done, or not verified here
 
@@ -224,16 +231,24 @@ Said plainly, per the plan's own rule about never claiming what is not there:
   overlay drawn over other apps. Screen watching on Linux reads which window is
   active from AT-SPI; a window manager or toolkit that does not report it shows
   as nothing on screen.
-- **Stage 6 is partly built.** Connector consent and the ticketing connector
-  are done. Not built yet:
-  - long-running tasks;
-  - Windows ODR registration and Intune deployment.
-
-  The connectors were only run against the sample servers in
-  `demo/ticketing_server.py` and `demo/workplace_servers.py`, not a real
-  service desk, Exchange, Google Workspace or SharePoint. The streamable-HTTP
-  transport (`url:`) is written but untested. Stage 6.5, the local decision
-  model, is not started.
+- **Stage 6 is built, except the On-device Agent Registry (ODR).** The ODR is
+  prerelease and its documentation could not be reached from here, so
+  registering Ondo with it and using the built-in File Explorer and Settings
+  connectors are not built. `docs/deploy-windows.md` says what is ready for
+  them. The rest of "IT can deploy through Intune and control MCP access" is
+  built: managed policy, enrollment and packaging. But it **has not run on
+  Windows or on a real Intune tenant**. Start the manual **windows** workflow
+  first.
+- **The connectors were only run against sample servers** (`demo/ticketing_server.py`,
+  `demo/workplace_servers.py`), not a real service desk, Exchange, Google
+  Workspace, SharePoint or finance system. The streamable-HTTP transport
+  (`url:`) is written but untested.
+- **Long operations use declared tools, not the MCP Tasks extension.** The MCP
+  SDK here (2.2) defines the Tasks types but implements neither side. So a
+  connector's long operation is declared as a start tool plus a status tool,
+  and the agent keeps the handle in the log. When servers speak Tasks natively,
+  that is a new transport for the same `OperationDecl`.
+- **Stage 6.5, the local decision model, is not started.**
 - **Office round-trips**: `openpyxl` keeps formulas (and macros in `.xlsm`) but
   drops charts and images on save. The plan's small COM path for what the
   libraries cannot do is not built.

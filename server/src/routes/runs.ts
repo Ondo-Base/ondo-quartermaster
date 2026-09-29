@@ -66,7 +66,7 @@ export function runRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
     const request = String(req.body?.request ?? wf?.request ?? "").trim();
     if (!request) return reply.code(400).send({ error: "Say what you need." });
     const agent = one<{ id: string }>(db,
-      "SELECT id FROM agents WHERE user_id = ? AND revoked = 0 AND (? IS NULL OR id = ?) ORDER BY last_seen DESC LIMIT 1",
+      "SELECT id FROM agents WHERE user_id = ? AND revoked = 0 AND confirmed = 1 AND (? IS NULL OR id = ?) ORDER BY last_seen DESC LIMIT 1",
       a.user.id, req.body?.agent_id ?? null, req.body?.agent_id ?? null);
     if (!agent) return reply.code(409).send({ error: "Pair the desktop agent first." });
     // "Ask about this screen": only the window the agent says is in front now.

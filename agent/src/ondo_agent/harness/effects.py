@@ -49,6 +49,7 @@ async def gate_and_approve(
         diff=diff,
         tool=action.tool,
         arguments=action.arguments,
+        call_id=getattr(ctx, "call_id", ""),
     )
     ctx.log.append(APPROVAL_REQUESTED, "gates", req.to_dict())
     res = await ctx.approvals.request(req)

@@ -101,7 +101,11 @@ class McpConnection:
 
     async def start(self, timeout: float = 60) -> None:
         if self._task is not None and self._error is None:
-            return
+            # Started, or starting for another run: wait until its tools are known.
+            assert self._ready is not None
+            await asyncio.wait_for(self._ready.wait(), timeout=timeout)
+            if self._error is None:
+                return
         self._error = None  # a failed start is tried again by the next run
         self.tools = {}
         self._queue = asyncio.Queue()

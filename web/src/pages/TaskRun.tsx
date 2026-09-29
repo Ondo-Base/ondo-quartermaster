@@ -19,6 +19,8 @@ export function buildTimeline(events: RunEvent[]): Item[] {
   let turnText = "";
   let turn: { steps: Map<string, { title: string; tool: string; status: string; ts: number; detail: any }>; args: Map<string, any>; ts: number } | null = null;
   const diffs = new Map<string, string>();
+  const RESTARTED = "The desktop agent restarted during this step. The task carried on from its record; anything it was waiting on was asked again.";
+  let restarted = false;
 
   const flush = () => {
     if (!turn || turn.steps.size === 0) { turn = null; return; }
@@ -46,11 +48,12 @@ export function buildTimeline(events: RunEvent[]): Item[] {
     const diff = steps.map((s) => diffs.get(s.detail?.path ?? "")).find(Boolean);
     items.push({
       key: `t${turn.ts}`, title, ts: turn.ts, status: failed.length ? "error" : running ? "now" : "done",
-      note: turnText || undefined, chips: chips.length > 1 || tools.has("read_file") ? chips : undefined,
+      note: [turnText, restarted ? RESTARTED : ""].filter(Boolean).join(" ") || undefined, chips: chips.length > 1 || tools.has("read_file") ? chips : undefined,
       typed: typed.length ? typed : undefined, diff,
       error: failed.length ? String(failed[0].detail?.error ?? "").replace(/^Permission denied: /, "") : undefined,
     });
     turn = null;
+    restarted = false;
   };
 
   for (const e of events) {
@@ -62,6 +65,10 @@ export function buildTimeline(events: RunEvent[]): Item[] {
     } else if (e.type === "step" && turn) {
       const prev = turn.steps.get(e.data.call_id);
       turn.steps.set(e.data.call_id, { title: e.data.title, tool: e.data.tool, status: e.data.status, ts: prev?.ts ?? e.ts * 1000, detail: e.data.detail ?? prev?.detail });
+    } else if (e.type === "run_restored") {
+      // Mid-turn: said on that turn, whose steps carry on after it. Otherwise on its own.
+      if (turn) restarted = true;
+      else items.push({ key: `r${e.seq}`, title: "The desktop agent restarted", ts: e.ts * 1000, status: "done", note: RESTARTED });
     } else if (e.type === "diff_proposed") {
       diffs.set(e.data.path, e.data.diff);
     }

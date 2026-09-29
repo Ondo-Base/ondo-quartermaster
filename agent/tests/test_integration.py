@@ -380,3 +380,209 @@ async def test_connector_consent_and_revocation_through_the_control_plane(server
 
 async def _gone(c: httpx.AsyncClient, approval_id: str):
     return not any(p["id"] == approval_id for p in (await c.get("/api/approvals", params={"status": "pending"})).json())
+
+
+async def _crash(agent: ControlPlaneAgent, conn: asyncio.Task) -> None:
+    """End an agent the way a killed process does: runs cut off, no final events."""
+    for t in list(agent._tasks):
+        t.cancel()
+    agent.stop()
+    conn.cancel()
+    await asyncio.gather(conn, *agent._tasks, return_exceptions=True)
+    if agent.connectors is not None:
+        await agent.connectors.aclose()
+
+
+async def test_a_run_survives_the_agent_restarting(server, drive, tmp_path):
+    """Stage 6's long-running tasks through the whole stack. The agent is killed
+    while a reconciliation runs on the ledger's side and while another run waits
+    for approval. A new agent process, with the same credentials and run folder,
+    reconnects: the control plane has it resume both from their logs. The first
+    waits for the same reconciliation and finishes; the second's old approval is
+    expired and nothing it proposed happened."""
+    from ondo_agent.models.adapters.scripted import call, say
+
+    def server_cmd(c):
+        return [
+            "{python}",
+            "-m",
+            "ondo_agent.demo.workplace_servers",
+            "--connector",
+            c,
+            "--store",
+            str(tmp_path / f"{c}.json"),
+        ]
+
+    cfg = base_config(
+        drive,
+        tmp_path,
+        grants={},
+        policy={"allowed_connectors": ["ledger", "documents"]},
+        connectors={
+            "ledger": {"command": server_cmd("ledger"), "env": {"ONDO_LEDGER_SECONDS": "4"}, "poll_seconds": 0.3},
+            "documents": {"command": server_cmd("documents")},
+        },
+    )
+
+    def first_model(m, t):
+        # Each run asks for one call and never gets past it: the agent is killed first.
+        if any("Reconcile receivables" in x.text for x in m if x.role == "user"):
+            return call(("ledger_start_reconciliation", {"period": "2026-09"}))
+        return call(("documents_update_document", {"id": "doc-71", "content": "Emptied.\n"}))
+
+    def second_model(m, t):
+        last = [x for x in m if x.role == "tool"][-1]
+        if "UNKNOWN CREDIT" in last.text:
+            return say("Three items did not match.")
+        return say("The change was never approved, so I left the tracker as it was.")
+
+    async with httpx.AsyncClient(base_url=server) as mara:
+        await _sign_in(mara, "mara.okonjo@northwind-ops.com")
+        code = (await mara.post("/api/pairing", json={})).json()["code"]
+        creds = await pair(server, code, tmp_path / "agent.json")
+        agent = ControlPlaneAgent(cfg, creds, model_factory=lambda: scripted_client(first_model))
+        conn = asyncio.create_task(agent.run_forever())
+        await _wait(lambda: _connected(mara))
+        recon = (await mara.post("/api/runs", json={"request": "Reconcile receivables for September."})).json()[
+            "run_id"
+        ]
+        edit = (await mara.post("/api/runs", json={"request": "Clear the renewals tracker."})).json()["run_id"]
+        # Each run is allowed its connector, then one waits on the ledger and one on a person.
+        allowed: set[str] = set()
+        deadline = time.monotonic() + 20
+        while len(allowed) < 2:
+            if time.monotonic() > deadline:
+                runs = [(await mara.get(f"/api/runs/{r}")).json() for r in (recon, edit)]
+                raise AssertionError(
+                    [
+                        (
+                            d["run"]["status"],
+                            d["run"]["reason"],
+                            [(e["type"], str(e["data"])[:160]) for e in d["events"][-4:]],
+                        )
+                        for d in runs
+                    ]
+                )
+            for p in await _wait(lambda: _pending(mara)):
+                if p["kind"] == "consent" and p["id"] not in allowed:
+                    await mara.post(f"/api/approvals/{p['id']}", json={"approved": True})
+                    allowed.add(p["id"])
+            await asyncio.sleep(0.1)
+
+        async def effect_waiting():
+            return [p for p in await _pending(mara) if p["kind"] == "effect"]
+
+        [waiting] = await _wait(effect_waiting)
+        assert waiting["run_id"] == edit
+
+        async def operation_running():
+            evs = (await mara.get(f"/api/runs/{recon}")).json()["events"]
+            return any(e["type"] == "operation_started" for e in evs)
+
+        await _wait(operation_running)
+        await _crash(agent, conn)
+
+        # A new process: same credentials, same run folder.
+        agent2 = ControlPlaneAgent(cfg, creds, model_factory=lambda: scripted_client(second_model))
+        conn2 = asyncio.create_task(agent2.run_forever())
+        try:
+            done = await _wait(lambda: _status(mara, recon, "finished"), timeout=30)
+            assert done["run"]["answer"] == "Three items did not match."
+            types = [e["type"] for e in done["events"]]
+            assert types.count("run_started") == 1 and types.count("operation_started") == 1
+            assert "run_restored" in types and types[-1] == "run_finished"
+            second = await _wait(lambda: _status(mara, edit, "finished"), timeout=30)
+            assert second["run"]["answer"] == "The change was never approved, so I left the tracker as it was."
+            assert [a["status"] for a in second["approvals"] if a["kind"] == "effect"] == ["expired"]
+            ops = [
+                r for r in json.loads((tmp_path / "ledger.json").read_text()).values() if r.get("kind") == "operation"
+            ]
+            assert len(ops) == 1
+            assert "Awaiting PO" in json.loads((tmp_path / "documents.json").read_text())["doc-71"]["content"]
+            for run_id in (recon, edit):
+                assert EventLog.open(tmp_path / "runs" / f"{run_id}.jsonl").verify_chain()
+            async with httpx.AsyncClient(base_url=server) as admin:
+                await _sign_in(admin, "it.admin@northwind-ops.com")
+                actions = [r["action"] for r in (await admin.get("/api/admin/audit", params={"limit": 1000})).json()]
+            for a in ("run.resumed", "agent.run.restored", "agent.operation.started", "agent.operation.finished"):
+                assert a in actions, a
+        finally:
+            await _crash(agent2, conn2)
+
+
+async def test_it_enrolls_an_agent_that_does_nothing_until_its_person_confirms(server, drive, tmp_path):
+    """Deployment without a pairing code: the admin makes an enrollment token for
+    device management; the agent enrolls itself for the signed-in person; it gets
+    no tasks and no grants until that person confirms the computer is theirs."""
+    from ondo_agent.connection import Credentials, enroll
+
+    async with httpx.AsyncClient(base_url=server) as admin, httpx.AsyncClient(base_url=server) as mara:
+        await _sign_in(admin, "it.admin@northwind-ops.com")
+        await _sign_in(mara, "mara.okonjo@northwind-ops.com")
+        tok = (await admin.post("/api/admin/enrollment-tokens", json={"label": "Intune"})).json()
+        assert tok["token"].startswith("ondo_enr_")
+        assert (await mara.post("/api/admin/enrollment-tokens", json={})).status_code == 403
+
+        try:
+            await enroll(server, "ondo_enr_wrong", "mara.okonjo@northwind-ops.com", tmp_path / "x.json")
+            raise AssertionError("a wrong token enrolled")
+        except RuntimeError as e:
+            assert "not valid" in str(e)
+        try:
+            await enroll(server, tok["token"], "nobody@northwind-ops.com", tmp_path / "x.json")
+            raise AssertionError("an unknown person was enrolled")
+        except RuntimeError as e:
+            assert "No active person" in str(e)
+
+        creds = await enroll(server, tok["token"], "Mara.Okonjo@northwind-ops.com", tmp_path / "agent.json")
+        assert Credentials.load(tmp_path / "agent.json").agent_id == creds.agent_id
+        agent = ControlPlaneAgent(
+            base_config(drive, tmp_path, grants={}), creds, model_factory=lambda: scripted_client(lambda m, t: None)
+        )
+        conn = asyncio.create_task(agent.run_forever())
+        try:
+            me = (await mara.get("/api/me")).json()
+            [pending] = [a for a in me["agents"] if a["id"] == creds.agent_id]
+            assert pending["confirmed"] == 0
+            # Until confirmed: no tasks go to it, and nothing can be granted to it.
+            r = await mara.post("/api/runs", json={"request": "Read the renewals workbook."})
+            assert r.status_code == 409
+            r = await mara.put(
+                f"/api/agents/{creds.agent_id}/grants/files", json={"granted": True, "scope": [str(drive)]}
+            )
+            assert r.status_code == 409 and "Confirm" in r.json()["error"]
+
+            assert (await mara.post(f"/api/agents/{creds.agent_id}/confirm", json={"mine": True})).json()["confirmed"]
+            await _wait(lambda: _connected(mara))
+            r = await mara.put(
+                f"/api/agents/{creds.agent_id}/grants/files", json={"granted": True, "scope": [str(drive)]}
+            )
+            assert r.status_code == 200
+
+            # A second computer enrolled in Mara's name that she does not recognise.
+            other = await enroll(server, tok["token"], "mara.okonjo@northwind-ops.com", tmp_path / "other.json")
+            assert (await mara.post(f"/api/agents/{other.agent_id}/confirm", json={"mine": False})).status_code == 200
+            ids = [a["id"] for a in (await mara.get("/api/me")).json()["agents"]]
+            assert other.agent_id not in ids and ids[0] == creds.agent_id
+
+            # Revoked tokens enroll nothing more.
+            assert (await admin.delete(f"/api/admin/enrollment-tokens/{tok['id']}")).status_code == 200
+            try:
+                await enroll(server, tok["token"], "mara.okonjo@northwind-ops.com", tmp_path / "y.json")
+                raise AssertionError("a revoked token enrolled")
+            except RuntimeError as e:
+                assert "not valid" in str(e)
+            [listed] = (await admin.get("/api/admin/enrollment-tokens")).json()
+            assert listed["uses"] == 2 and listed["revoked_at"]
+            actions = [r["action"] for r in (await admin.get("/api/admin/audit", params={"limit": 1000})).json()]
+            for a in (
+                "admin.enrollment_token_created",
+                "agent.enrolled",
+                "agent.confirmed",
+                "agent.rejected",
+                "admin.enrollment_token_revoked",
+            ):
+                assert a in actions, a
+        finally:
+            agent.stop()
+            conn.cancel()

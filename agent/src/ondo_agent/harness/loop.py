@@ -19,12 +19,17 @@ from typing import Any
 
 from ..blobs import BlobStore
 from ..log import (
+    APPROVAL_REQUESTED,
+    APPROVAL_RESOLVED,
     CONTEXT_COLLAPSED,
     CONTEXT_INJECTION,
     MODEL_REQUEST,
     MODEL_RESPONSE,
+    OPERATION_FINISHED,
+    OPERATION_STARTED,
     PERMISSION_DENIED,
     RUN_FINISHED,
+    RUN_RESTORED,
     RUN_STARTED,
     RUN_STOPPED,
     SCREENING,
@@ -162,7 +167,8 @@ class Harness:
     async def run(self, request: str | None = None) -> RunResult:
         if request is not None and not self.log.of_type(RUN_STARTED):
             self.start(request)
-        steps = 0
+        # A restored run keeps counting against the same budget.
+        steps = len(self.log.of_type(MODEL_RESPONSE))
         try:
             while True:
                 await self.broker.wait_resumed()
@@ -184,6 +190,78 @@ class Harness:
         except ModelError as e:
             self.log.append(RUN_STOPPED, "harness.model", {"reason": f"model error: {e}", "status": "error"})
             return RunResult(self.log.run_id, "error", reason=str(e), steps=steps, usage=self._usage())
+
+    async def resume(self, reason: str = "the desktop agent restarted") -> RunResult:
+        """Carry on a run a previous agent process was running, from its log.
+
+        The calls that process was serving when it ended get a result that says
+        what can honestly be said: a long operation is waited for again by its
+        handle; a call that finished is reported as done; a read that did not
+        is safe to repeat; a change that was still waiting for approval did not
+        happen; anything else may or may not have happened, and the model is
+        told to check before trying again."""
+        if self.log.of_type(RUN_FINISHED, RUN_STOPPED):
+            raise ValueError(f"run {self.log.run_id} has already ended")
+        responses = self.log.of_type(MODEL_RESPONSE)
+        pending: list[dict[str, Any]] = []
+        if responses:
+            last = responses[-1]
+            answered = {e.data["call_id"] for e in self.log.of_type(TOOL_RESULT) if e.seq > last.seq}
+            pending = [c for c in last.data.get("tool_calls", []) if c["id"] not in answered]
+        self.log.append(RUN_RESTORED, "harness", {"reason": reason, "interrupted": [c["id"] for c in pending]})
+        try:
+            for c in pending:
+                call = ToolCall(c["id"], c["name"], c.get("arguments", {}))
+                self._log_result(call, await self._restore_call(call))
+        except RunStopped as s:
+            return self._stop(s.reason, f"broker:{s.by or 'user'}", len(responses))
+        return await self.run()
+
+    async def _restore_call(self, c: ToolCall) -> ToolResult:
+        spec = self.tools.get(c.name)
+        mine = [e for e in self.log if e.data.get("call_id") == c.id]
+        started = [e for e in mine if e.type == OPERATION_STARTED]
+        finished = {e.data.get("handle") for e in mine if e.type == OPERATION_FINISHED}
+        open_ops = [e for e in started if e.data.get("handle") not in finished]
+        svc = self.services.get("connectors")
+        if open_ops and svc is not None and spec is not None:
+            op = open_ops[-1].data
+            return await self._run_tool(c, resume=lambda ctx: svc.resume_operation(op, ctx))
+        steps = [e for e in mine if e.type == STEP and e.data.get("status") in ("done", "error")]
+        changes = spec is not None and spec.max_effect != "read"
+        if steps:
+            d = steps[-1].data
+            what = d.get("title", c.name)
+            if d.get("status") == "error":
+                return ToolResult(f"This failed before the agent restarted: {what}.", is_error=True)
+            return ToolResult(
+                f"This finished before the agent restarted, but its full result was lost: {what}."
+                + (" It was done: do not do it again." if changes else " Run it again if you need the details.")
+            )
+        if not changes:
+            return ToolResult(
+                "Interrupted by an agent restart before it finished. Nothing was changed; run it again if you "
+                "still need it.",
+                is_error=True,
+            )
+        # A yes to using the connector says nothing about whether the change was approved.
+        requested = {e.data.get("id") for e in mine if e.type == APPROVAL_REQUESTED and e.data.get("kind") != "consent"}
+        resolved = {
+            e.data.get("approval_id"): e.data.get("approved")
+            for e in self.log.of_type(APPROVAL_RESOLVED)
+            if e.data.get("approval_id") in requested
+        }
+        if requested and not any(resolved.values()):
+            return ToolResult(
+                "Interrupted by an agent restart while waiting for approval. Nothing was changed; ask again if it "
+                "is still needed.",
+                is_error=True,
+            )
+        return ToolResult(
+            "Interrupted by an agent restart after it started. It may or may not have happened: check the current "
+            "state before doing it again.",
+            is_error=True,
+        )
 
     def _stop(self, reason: str, source: str, steps: int) -> RunResult:
         self.log.append(RUN_STOPPED, source, {"reason": reason, "status": "stopped", "steps": steps})
@@ -265,17 +343,20 @@ class Harness:
             self._log_result(c, results[c.id])
         self.broker.ensure_running()
 
-    async def _run_tool(self, c: ToolCall) -> ToolResult:
+    async def _run_tool(self, c: ToolCall, resume=None) -> ToolResult:
+        """Serve one call. ``resume`` serves it instead of the tool's handler, for a
+        call a previous agent process started (its tool_call is already logged)."""
         spec = self.tools.get(c.name)
-        self.log.append(
-            TOOL_CALL,
-            f"model:{self.model.last_profile.name}",
-            {
-                "call_id": c.id,
-                "name": c.name,
-                "arguments": c.arguments,
-            },
-        )
+        if resume is None:
+            self.log.append(
+                TOOL_CALL,
+                f"model:{self.model.last_profile.name}",
+                {
+                    "call_id": c.id,
+                    "name": c.name,
+                    "arguments": c.arguments,
+                },
+            )
         if spec is None:
             return ToolResult(f"Unknown tool {c.name!r}. Available: {', '.join(self.tools)}.", is_error=True)
         if "__unparsed_arguments__" in c.arguments:
@@ -291,7 +372,9 @@ class Harness:
             await self.broker.wait_resumed()
             self.broker.ensure(spec.grant)
             assert spec.handler is not None
-            task = asyncio.ensure_future(spec.handler(c.arguments, self.tool_ctx))
+            call_ctx = self.tool_ctx.for_call(c.id)
+            work = resume(call_ctx) if resume is not None else spec.handler(c.arguments, call_ctx)
+            task = asyncio.ensure_future(work)
             stop = asyncio.ensure_future(self.broker.wait_stopped())
             done, _ = await asyncio.wait({task, stop}, return_when=asyncio.FIRST_COMPLETED)
             if stop in done:

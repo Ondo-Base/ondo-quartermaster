@@ -49,8 +49,12 @@ class Config:
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
+        from . import managed
+
         path = Path(path)
         raw = _expand(yaml.safe_load(path.read_text()) or {})
+        # What device management set wins over the file, and only narrows.
+        raw = managed.apply(raw, managed.load())
         cfg = cls(raw, path.parent.resolve())
         prof = raw.get("models", {}).get("profiles_file")
         if prof:

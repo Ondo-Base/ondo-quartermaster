@@ -5,6 +5,7 @@ agent:
   runs_dir: .ondo/runs
   decision_labels: .ondo/decisions.jsonl
   consents_file: .ondo/consents.json   # connectors allowed on this device, when no control plane is attached
+  # Set by device management instead (docs/deploy-windows.md): control_plane, enrollment_token.
 
 models:
   profiles_file: config/profiles.yaml
@@ -30,7 +31,7 @@ policy:
   writes_require_approval: true
   # Connectors people may allow. With a control plane, the organisation's policy
   # replaces this list.
-  allowed_connectors: [ticketing, mail, calendar, documents]
+  allowed_connectors: [ticketing, mail, calendar, documents, ledger]
 
 # Connectors, reached over MCP. Each one is allowed by the person on its first use
 # (and only if policy lists it); every change it makes stops for approval.
@@ -49,6 +50,12 @@ connectors:
     command: ["{python}", -m, ondo_agent.demo.workplace_servers, --connector, calendar, --store, .ondo/calendar.json]
   documents:
     command: ["{python}", -m, ondo_agent.demo.workplace_servers, --connector, documents, --store, .ondo/documents.json]
+  # The sample finance system: a reconciliation runs for a while on its side, and
+  # the agent waits for it by its handle (poll_seconds, max_wait_hours).
+  ledger:
+    command: ["{python}", -m, ondo_agent.demo.workplace_servers, --connector, ledger, --store, .ondo/ledger.json]
+    poll_seconds: 5
+    max_wait_hours: 8
   # Any other MCP server: declare each tool's effect, or it is not offered.
   # billing:
   #   url: https://mcp.billing.internal/mcp

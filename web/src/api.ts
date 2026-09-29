@@ -34,7 +34,9 @@ export interface AgentConnector {
   id: string; name: string; description: string; tools: { name: string; effect: string; does?: string }[];
   allowed_by_policy: boolean; consent: { by: string; at: number } | null;
 }
-export interface Agent { id: string; hostname: string; os: string; connected: boolean; grants: Grants; capabilities?: Capabilities; connectors?: AgentConnector[]; last_seen?: number }
+export interface Agent { id: string; hostname: string; os: string; connected: boolean; grants: Grants; capabilities?: Capabilities; connectors?: AgentConnector[]; last_seen?: number;
+  /** 0: a computer IT enrolled for this person, waiting for them to say it is theirs. */
+  confirmed?: number }
 export interface Me {
   user: { id: string; email: string; name: string; title: string; role: "member" | "admin" };
   org: { id: string; name: string; policy: Policy };

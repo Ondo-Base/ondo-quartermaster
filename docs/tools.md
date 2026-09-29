@@ -346,3 +346,12 @@ Your organisation's document store: search and read documents. Adding, changing 
 | `documents_create_document` | Shared files · asks first | Add a new document to a team site. Asks the user first. |
 | `documents_update_document` | Shared files · asks first | Replace a document's whole text. Asks the user first, showing the change. |
 | `documents_share_document` | Sends out · asks first | Give someone access to a document by email. Asks the user first. |
+
+## Ledger (`ledger`)
+
+The finance system: run reconciliations and read their results. It changes no balances.
+
+| Tool | Effect | What it does |
+| --- | --- | --- |
+| `ledger_start_reconciliation` | Reads | Reconcile an account's ledger against the bank for a period (YYYY-MM). This can take a long time; the tool waits for it and returns the result, including unmatched items. |
+| `ledger_get_operation` | Reads | The status of a reconciliation already started, by its operation id. |

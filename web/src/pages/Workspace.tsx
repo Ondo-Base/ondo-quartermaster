@@ -6,7 +6,7 @@ import { Icon } from "../icons";
 import { useSession } from "../session";
 
 export function Workspace() {
-  const { me } = useSession();
+  const { me, reload: reloadMe } = useSession();
   const { openPrompt, toast } = useShell();
   const [scope, setScope] = useState<"mine" | "team" | "all">("mine");
   const { data: runs } = useData<Run[]>(`/api/runs?scope=${scope}`, (e) => e === "run" || e === "approval" || e === "run_event");
@@ -21,6 +21,16 @@ export function Workspace() {
     pending.length ? `${pending.length === 1 ? "One thing needs" : `${numberWord(pending.length)} things need`} your decision.` : "Nothing is waiting on you.",
     runningCount ? `${runningCount === 1 ? "One task is" : `${numberWord(runningCount)} tasks are`} running on your machine.` : "",
   ];
+
+  async function confirmAgent(id: string, mine: boolean) {
+    try {
+      await api(`/api/agents/${id}/confirm`, { body: { mine } });
+      toast(mine ? "Confirmed. Grant it what it needs in Manage permissions." : "Switched off. Your IT team can see that you did not recognise it.");
+      await reloadMe();
+    } catch (e) {
+      toast((e as ApiError).message);
+    }
+  }
 
   async function approve(a: Approval) {
     try {
@@ -64,6 +74,20 @@ export function Workspace() {
             <h1 className="display">{greeting(me.user.name)}</h1>
             <p className="lead">{leadParts.filter(Boolean).join(" ")}</p>
           </div>
+
+          {me.agents.filter((a) => a.confirmed === 0).map((a) => (
+            <section key={a.id} className="card qm-rise" aria-label="Confirm this computer">
+              <div className="row" style={{ padding: "16px 20px", gap: 16, alignItems: "center" }}>
+              <span className="icon-square"><Icon name="monitor" size={17} /></span>
+              <span className="grow col" style={{ gap: 2 }}>
+                <span style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>Your IT team set up Ondo on {a.hostname || "a computer"} for you</span>
+                <span className="caption">{a.os ? `${a.os} · ` : ""}It does nothing until you say it is yours. If you do not recognise it, say so and it is switched off.</span>
+              </span>
+              <button className="btn btn-sm" onClick={() => void confirmAgent(a.id, false)}>Not mine</button>
+              <button className="btn btn-sm btn-primary" onClick={() => void confirmAgent(a.id, true)}>Yes, it's mine</button>
+              </div>
+            </section>
+          ))}
 
           <section className="card" aria-labelledby="waiting">
             <div className="card-head">

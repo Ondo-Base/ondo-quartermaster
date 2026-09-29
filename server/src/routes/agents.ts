@@ -52,10 +52,53 @@ export function agentRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
     return { agent_id: agentId, token: secret };
   });
 
+  // Enrollment: IT's device management gives the agent an organisation token and the
+  // signed-in person's address. The agent it creates is unconfirmed: it receives no
+  // tasks and no grants until that person says, in the web, that it is their computer.
+  app.post<{ Body: { token?: string; user?: string; device?: { hostname?: string; os?: string } } }>("/api/agent/enroll", async (req, reply) => {
+    if (tooMany(`enroll:${req.ip}`, 30, 10 * 60_000)) return reply.code(429).send({ error: "Too many attempts. Wait a few minutes and try again." });
+    const t = one<{ id: string; org_id: string; label: string; revoked_at: number | null }>(db,
+      "SELECT id, org_id, label, revoked_at FROM enrollment_tokens WHERE token_hash = ?", sha256(String(req.body?.token ?? "")));
+    if (!t || t.revoked_at) return reply.code(401).send({ error: "That enrollment token is not valid. Ask your IT team." });
+    const email = String(req.body?.user ?? "").trim().toLowerCase();
+    const u = one<{ id: string; email: string; active: number }>(db,
+      "SELECT id, email, active FROM users WHERE org_id = ? AND lower(email) = ?", t.org_id, email);
+    if (!u || !u.active) return reply.code(404).send({ error: `No active person with the address ${email || "(none)"} in this organisation.` });
+    const agentId = id("agt");
+    const secret = token(32);
+    const d = req.body?.device ?? {};
+    run(db, "INSERT INTO agents (id, user_id, device_id, token_hash, hostname, os, confirmed, enrolled_via, created_at) VALUES (?,?,?,?,?,?,0,?,?)",
+      agentId, u.id, null, sha256(secret), String(d.hostname ?? "").slice(0, 200), String(d.os ?? "").slice(0, 200), t.id, now());
+    for (const k of KINDS) {
+      run(db, "INSERT INTO grants (agent_id, kind, granted, scope_json, updated_at, updated_by) VALUES (?,?,0,'[]',?,?)", agentId, k, now(), "enrollment");
+    }
+    run(db, "UPDATE enrollment_tokens SET uses = uses + 1 WHERE id = ?", t.id);
+    audit(db, t.org_id, `enrollment:${t.label}`, "agent.enrolled", agentId, { user: u.email, hostname: d.hostname, os: d.os, token: t.id });
+    hub.publish(t.org_id, u.id, "agent", { agent_id: agentId, connected: false });
+    return { agent_id: agentId, token: secret, confirmed: false };
+  });
+
+  // The person decides whether a computer IT enrolled for them is theirs.
+  app.post<{ Params: { id: string }; Body: { mine?: boolean } }>("/api/agents/:id/confirm", { preHandler: verified }, async (req, reply) => {
+    const a = req.authed!;
+    const agent = one<AgentRow & { confirmed: number }>(db, "SELECT * FROM agents WHERE id = ? AND user_id = ? AND revoked = 0", req.params.id, a.user.id);
+    if (!agent) return reply.code(404).send({ error: "no such agent" });
+    if (req.body?.mine) {
+      run(db, "UPDATE agents SET confirmed = 1, device_id = COALESCE(device_id, ?) WHERE id = ?", a.session.device_id, agent.id);
+      audit(db, a.user.org_id, `user:${a.user.email}`, "agent.confirmed", agent.id, { hostname: agent.hostname });
+    } else {
+      run(db, "UPDATE agents SET revoked = 1 WHERE id = ?", agent.id);
+      audit(db, a.user.org_id, `user:${a.user.email}`, "agent.rejected", agent.id, { hostname: agent.hostname });
+      hub.agents.get(agent.id)?.socket.close(4403, "rejected by the user");
+    }
+    hub.publish(a.user.org_id, a.user.id, "agent", { agent_id: agent.id });
+    return { agent_id: agent.id, confirmed: !!req.body?.mine };
+  });
+
   app.get("/api/pairing/status", { preHandler: verified }, async (req) => {
     const a = req.authed!;
     const ag = one<{ id: string; hostname: string; os: string }>(db,
-      "SELECT id, hostname, os FROM agents WHERE user_id = ? AND revoked = 0 ORDER BY created_at DESC LIMIT 1", a.user.id);
+      "SELECT id, hostname, os FROM agents WHERE user_id = ? AND revoked = 0 AND confirmed = 1 ORDER BY created_at DESC LIMIT 1", a.user.id);
     return ag ? { paired: true, agent: { ...ag, connected: hub.isConnected(ag.id), grants: hub.grantsFor(ag.id), capabilities: hub.capabilitiesFor(ag.id) } } : { paired: false };
   });
 
@@ -76,6 +119,9 @@ export function agentRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
       if (granted) {
         // Administrators revoke; only the person at the device grants.
         if (!isOwner) return reply.code(403).send({ error: "Only the person using this device can grant access." });
+        if (!(agent as AgentRow & { confirmed?: number }).confirmed) {
+          return reply.code(409).send({ error: "Confirm this computer is yours first." });
+        }
         const policy = normalisePolicy(parse(one<{ policy_json: string }>(db, "SELECT policy_json FROM orgs WHERE id = ?", owner.org_id)!.policy_json, {}));
         const refusal = checkGrant(policy, kind, scope);
         if (refusal) {

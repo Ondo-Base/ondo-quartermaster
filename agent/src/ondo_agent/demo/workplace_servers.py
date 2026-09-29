@@ -319,6 +319,64 @@ def build_documents(store: JsonStore):
     return mcp
 
 
+LEDGER_SEED = [
+    {"id": "acct-1200", "kind": "account", "name": "Receivables (GBP)", "bank": "Barclays 4471"},
+]
+
+
+def build_ledger(store: JsonStore):
+    """Reconciliations run for a while on the server side: ``ONDO_LEDGER_SECONDS``
+    (default 20) from start to finish. Progress comes from the wall clock, and the
+    operation is kept in the store, so it survives either side restarting."""
+    import time
+
+    Server, ToolError = server_class()
+    mcp = Server("ledger", log_level="WARNING")
+    duration = float(os.environ.get("ONDO_LEDGER_SECONDS", "20"))
+
+    @mcp.tool()
+    def start_reconciliation(period: str, account: str = "acct-1200") -> str:
+        """Start reconciling an account against the bank for a period (YYYY-MM)."""
+        try:
+            store.get(account)
+        except ValueError:
+            raise ToolError(f"no account {account}") from None
+        n = sum(1 for r in store.all() if r.get("kind") == "operation") + 1
+        op = {"id": f"op-{n}", "kind": "operation", "account": account, "period": period, "started": time.time()}
+        store.put(op)
+        return json.dumps({"operation": op["id"], "status": "running", "progress": 0})
+
+    @mcp.tool()
+    def get_operation(id: str) -> str:
+        """The status of a reconciliation, with its result when it has finished."""
+        try:
+            op = store.get(id)
+        except ValueError:
+            raise ToolError(f"no operation {id}") from None
+        done = min(1.0, (time.time() - op["started"]) / duration) if duration > 0 else 1.0
+        if done < 1.0:
+            return json.dumps({"operation": id, "status": "running", "progress": int(done * 100)})
+        return json.dumps(
+            {
+                "operation": id,
+                "status": "succeeded",
+                "progress": 100,
+                "result": {
+                    "account": op["account"],
+                    "period": op["period"],
+                    "matched": 412,
+                    "unmatched": [
+                        {"date": f"{op['period']}-03", "amount": 1250.00, "reference": "HALLECK INV-20877"},
+                        {"date": f"{op['period']}-17", "amount": -84.20, "reference": "BANK CHARGE"},
+                        {"date": f"{op['period']}-28", "amount": 6400.00, "reference": "UNKNOWN CREDIT"},
+                    ],
+                },
+            }
+        )
+
+    return mcp
+
+
 def unified_diff(before: str, after: str, name: str) -> str:
     return "".join(
         difflib.unified_diff(
@@ -331,6 +389,7 @@ BUILDERS = {
     "mail": (build_mail, MAIL_SEED),
     "calendar": (build_calendar, CALENDAR_SEED),
     "documents": (build_documents, DOCS_SEED),
+    "ledger": (build_ledger, LEDGER_SEED),
 }
 
 

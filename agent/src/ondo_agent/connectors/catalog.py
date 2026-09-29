@@ -40,6 +40,25 @@ Args = dict[str, Any]
 
 
 @dataclass
+class OperationDecl:
+    """A tool that starts a long operation on the connector's side and returns a
+    handle, and the read tool that reports on it. The agent keeps the handle in
+    the run's log and waits, so a restart waits for the same operation again
+    rather than starting another. (The shape of MCP's Tasks extension, for servers
+    that expose it as ordinary tools.)"""
+
+    status_tool: str
+    handle_key: str = "operation"  # where the handle is in the start tool's result
+    handle_arg: str = "id"  # the status tool's argument that takes it
+    status_key: str = "status"
+    progress_key: str = "progress"  # 0 to 100, optional
+    done: tuple[str, ...] = ("succeeded", "failed", "cancelled")
+    failed: tuple[str, ...] = ("failed", "cancelled")
+    # What the step says while it runs ("Reconciling …"); the tool's title once done.
+    running: Callable[[Args], str] | None = None
+
+
+@dataclass
 class ToolDecl:
     name: str
     effect: str  # read | submit | send_external | write_shared | move_money
@@ -53,6 +72,8 @@ class ToolDecl:
     description: str = ""
     # A text diff for the approval, from the arguments and the current record.
     diff: Callable[[Args, dict | None], str | None] | None = None
+    # Set when the tool starts a long operation rather than finishing in the call.
+    operation: OperationDecl | None = None
 
     def gate_effects(self, args: Args) -> list[str]:
         if self.effects is not None:
@@ -387,7 +408,37 @@ DOCUMENTS = ConnectorDecl(
     },
 )
 
-CATALOG: dict[str, ConnectorDecl] = {c.id: c for c in (TICKETING, MAIL, CALENDAR, DOCUMENTS)}
+# -- ledger (finance system) -----------------------------------------------------------------
+
+LEDGER = ConnectorDecl(
+    "ledger",
+    "Ledger",
+    "The finance system: run reconciliations and read their results. It changes no balances.",
+    {
+        t.name: t
+        for t in [
+            ToolDecl(
+                "start_reconciliation",
+                "read",
+                lambda a: f"Reconciled {a.get('account', 'receivables')} for {a.get('period')}",
+                operation=OperationDecl(
+                    "get_operation",
+                    running=lambda a: f"Reconciling {a.get('account', 'receivables')} for {a.get('period')}",
+                ),
+                description="Reconcile an account's ledger against the bank for a period (YYYY-MM). This can take "
+                "a long time; the tool waits for it and returns the result, including unmatched items.",
+            ),
+            ToolDecl(
+                "get_operation",
+                "read",
+                lambda a: f"Checked operation {a.get('id')}",
+                description="The status of a reconciliation already started, by its operation id.",
+            ),
+        ]
+    },
+)
+
+CATALOG: dict[str, ConnectorDecl] = {c.id: c for c in (TICKETING, MAIL, CALENDAR, DOCUMENTS, LEDGER)}
 
 
 def from_config(cid: str, cfg: dict[str, Any]) -> ConnectorDecl:

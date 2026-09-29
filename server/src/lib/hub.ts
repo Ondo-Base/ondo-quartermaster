@@ -29,6 +29,9 @@ const AUDITED: Record<string, string> = {
   grant_changed: "agent.grant.changed",
   window_access: "agent.window",
   connector_access: "agent.connector",
+  operation_started: "agent.operation.started",
+  operation_finished: "agent.operation.finished",
+  run_restored: "agent.run.restored",
 };
 
 /** What the agent says is in front of the user, among the windows they shared.
@@ -37,7 +40,7 @@ const AUDITED: Record<string, string> = {
 export interface ScreenContext { window: string | null; title: string | null; watching: boolean; at: number }
 
 export class Hub {
-  agents = new Map<string, { socket: WebSocket; userId: string; orgId: string }>();
+  agents = new Map<string, { socket: WebSocket; userId: string; orgId: string; attachedAt: number }>();
   subscribers = new Set<Subscriber>();
   screens = new Map<string, ScreenContext>();
 
@@ -133,7 +136,7 @@ export class Hub {
   attach(agent: AgentRow, socket: WebSocket): void {
     const { org_id, policy_json } = this.orgOf(agent.user_id);
     this.agents.get(agent.id)?.socket.close(4000, "replaced by a newer connection");
-    this.agents.set(agent.id, { socket, userId: agent.user_id, orgId: org_id });
+    this.agents.set(agent.id, { socket, userId: agent.user_id, orgId: org_id, attachedAt: now() });
     run(this.db, "UPDATE agents SET last_seen = ? WHERE id = ?", now(), agent.id);
     audit(this.db, org_id, `agent:${agent.id}`, "agent.connected", agent.id, { hostname: agent.hostname });
     // The control plane is the source of truth for grants and policy once paired.
@@ -164,6 +167,7 @@ export class Hub {
       run(this.db, "UPDATE agents SET hostname = ?, os = ?, capabilities_json = ? WHERE id = ?",
         String(d.hostname ?? ""), String(d.os ?? ""), JSON.stringify(msg.capabilities ?? {}), agent.id);
       this.publish(orgId, agent.user_id, "agent", { agent_id: agent.id, connected: true });
+      if (Array.isArray(msg.running) && Array.isArray(msg.unfinished)) this.reconcileRuns(agent, orgId, msg.running, msg.unfinished);
       return;
     }
     if (msg.type === "event") return this.ingest(agent, orgId, msg.event);
@@ -263,6 +267,44 @@ export class Hub {
   }
 
   // -- runs ---------------------------------------------------------------------------
+
+  /** After the agent (re)connects: which of its runs carry on. ``running`` are runs
+   * this agent process is still serving (the connection dropped, nothing else);
+   * ``unfinished`` are logs it found on disk with no end (the process restarted). */
+  private reconcileRuns(agent: AgentRow, orgId: string, running: unknown[], unfinished: unknown[]): void {
+    const live = new Set(running.map(String));
+    const onDisk = new Set(unfinished.map(String));
+    const t = now();
+    // A run started after this connection opened was sent on it: not the old process's.
+    const since = this.agents.get(agent.id)?.attachedAt ?? t;
+    const active = all<{ id: string; user_id: string; status: string }>(this.db,
+      "SELECT id, user_id, status FROM runs WHERE agent_id = ? AND status IN ('queued','running','waiting','paused') AND created_at < ?",
+      agent.id, since);
+    for (const r of active) {
+      if (live.has(r.id)) continue;
+      // Whatever it was waiting on went with the old process; the resumed run asks again.
+      run(this.db, "UPDATE approvals SET status = 'expired' WHERE run_id = ? AND status = 'pending'", r.id);
+      this.publish(orgId, r.user_id, "approval", { run_id: r.id, status: "expired" });
+      if (onDisk.has(r.id)) {
+        const who = one<{ email: string }>(this.db, "SELECT email FROM users WHERE id = ?", r.user_id);
+        run(this.db, "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ?", t, r.id);
+        audit(this.db, orgId, `agent:${agent.id}`, "run.resumed", r.id, { reason: "the desktop agent restarted" });
+        this.send(agent.id, { type: "resume_run", run_id: r.id, user: who?.email ?? "" });
+      } else {
+        const reason = "The desktop agent restarted and has no record of this task.";
+        run(this.db, "UPDATE runs SET status = 'stopped', reason = ?, updated_at = ? WHERE id = ?", reason, t, r.id);
+        audit(this.db, orgId, `agent:${agent.id}`, "run.lost", r.id, { reason });
+      }
+      this.publish(orgId, r.user_id, "run", { run_id: r.id });
+    }
+    // Logs for runs that ended while the agent was away: the agent closes them.
+    for (const runId of onDisk) {
+      const r = one<{ status: string; reason: string }>(this.db, "SELECT status, reason FROM runs WHERE id = ? AND agent_id = ?", runId, agent.id);
+      if (r && !["queued", "running", "waiting", "paused"].includes(r.status)) {
+        this.send(agent.id, { type: "abandon_run", run_id: runId, reason: r.reason || "Stopped while the desktop agent was offline." });
+      }
+    }
+  }
 
   startRun(agentId: string, userId: string, userEmail: string, request: string, context?: { window: string },
     workflow?: { id: string; name: string }): string | null {
