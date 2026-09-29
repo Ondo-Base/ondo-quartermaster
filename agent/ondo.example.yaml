@@ -65,7 +65,12 @@ connectors:
   #     approve_invoice: {effect: move_money, title: "Approved an invoice"}
 
 decision:
-  provider: rules          # rules | jev (see decision/jev.py before enabling)
+  provider: rules          # rules | jev | laya (see decision/jev.py and docs/decision-local.md first)
+  # On-prem (Laya), exactly one of:
+  #   endpoint: http://10.20.0.5:8000     # a laya-serve inside the network; public hosts are refused
+  #   internal_hosts: [.corp.example]      # names that are inside the network, when DNS says otherwise
+  #   checkpoint: C:/ProgramData/Ondo/laya  # local weights, run in the agent (pip install "ondo-agent[laya]")
+  # After switching provider, re-run calibration against it and point gates.thresholds_file at its output.
 
 screening:
   enabled: true

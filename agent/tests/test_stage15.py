@@ -144,28 +144,24 @@ async def test_jev_adapter_maps_typed_questions():
         return httpx.Response(
             200,
             json={
-                "answers": [
-                    {"id": "b", "probability": 0.91},
-                    {
-                        "id": "c",
-                        "value": 'button "Submit"',
-                        "probability": 0.8,
-                        "distribution": {'button "Submit"': 0.8, 'button "Cancel"': 0.2},
-                    },
-                ]
+                "answers": {
+                    "b": {"type": "noul", "noul": 0.91},
+                    "c": {"type": "choice", "choice": "A", "probabilities": {"A": 0.8, "B": 0.2}},
+                }
             },
         )
 
     jev = JevDecisionModel(
         base_url="https://decisions.test",
-        path="/v1/decide",
+        path="/v1/systemone",
         client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
     )
     b, c = await jev.ask(
         "state", [Boolean("b", "is it?"), Choice("c", "which?", ['button "Submit"', 'button "Cancel"'], "submit")]
     )
-    assert seen["questions"][0] == {"id": "b", "type": "boolean", "question": "is it?"}
-    assert seen["questions"][1]["options"] == ['button "Submit"', 'button "Cancel"']
+    # The /v1/systemone shape (decision/systemone.py), shared with the Laya adapter.
+    assert seen["questions"]["b"] == {"type": "noul", "instructions": "is it?"}
+    assert seen["questions"]["c"]["criteria"] == {"A": 'button "Submit"', "B": 'button "Cancel"'}
     assert b.value is True and b.probability == 0.91
     assert c.value == 'button "Submit"' and c.distribution['button "Cancel"'] == 0.2
 

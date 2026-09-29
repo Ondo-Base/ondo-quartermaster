@@ -276,12 +276,19 @@ def main(argv: list[str] | None = None) -> None:
         "calibrate", help="measure the decision model and write gate thresholds (see --help)", add_help=False
     )
 
+    sub.add_parser("decisions", help="label logged decisions and export them to fine-tune (see --help)", add_help=False)
+
     if argv is None:
         argv = sys.argv[1:]
     if argv[:1] == ["calibrate"]:
         from .decision.calibrate import main as cal
 
         cal(argv[1:])
+        return
+    if argv[:1] == ["decisions"]:
+        from .decision.labels import main as dec
+
+        dec(argv[1:])
         return
     a = ap.parse_args(argv)
     handlers = {"run": _run, "replay": _replay, "fork": _fork, "pair": _pair, "enroll": _enroll, "connect": _connect}
