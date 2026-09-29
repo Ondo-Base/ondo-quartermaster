@@ -193,7 +193,11 @@ async def _one(ctx: ToolContext, s: ScreenSession, w: Window, a: dict[str, Any])
     if act in POINTER:
         if act in ("click", "double_click", "right_click") and not a.get("target"):
             raise ScreenError("Say what you are clicking in target (it is how the click is checked and gated).")
-        x, y, how = await s.point(w, a)
+        if act == "scroll" and a.get("target") is None and a.get("x") is None:
+            r = await s.locate(w)  # no point given: the middle of the window
+            x, y, how = r.x + r.w // 2, r.y + r.h // 2, "the middle of the window"
+        else:
+            x, y, how = await s.point(w, a)
         if act in ("click", "double_click"):
             refused = await _gate_commit(ctx, s, w, f"Click {a['target']}", str(a["target"]))
             if refused:

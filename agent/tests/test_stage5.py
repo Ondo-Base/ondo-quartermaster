@@ -253,6 +253,7 @@ async def test_pixels_only_after_the_ladder_and_never_escape(desktop, drive, tmp
                 ),
                 call(("screen_act", {"window": REMOTE, "actions": [{"action": "key", "keys": "ctrl+s"}]})),
                 call(("screen_act", {"window": REMOTE, "actions": [{"action": "click", "x": 5, "y": 5}]})),
+                call(("screen_act", {"window": REMOTE, "actions": [{"action": "scroll", "direction": "down"}]})),
                 say("done"),
             ]
         )
@@ -278,6 +279,7 @@ async def test_pixels_only_after_the_ladder_and_never_escape(desktop, drive, tmp
     assert "not approved by mara.okonjo" in r[6]  # the submit click, refused
     assert "not approved" in r[7]  # Ctrl+S may save: always asked
     assert "Say what you are clicking" in r[8]
+    assert "1. scroll down 3: done at screen" in r[9] and "the middle of the window" in r[9]
     assert len(approvals.seen) == 2
     assert not saved.exists()
 
