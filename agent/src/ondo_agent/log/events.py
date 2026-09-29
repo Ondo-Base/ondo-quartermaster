@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from typing import Any
 
@@ -86,7 +86,7 @@ class Event:
         return json.dumps(d, separators=(",", ":"), default=_fallback)
 
     @classmethod
-    def from_json(cls, line: str) -> "Event":
+    def from_json(cls, line: str) -> Event:
         d = json.loads(line)
         d["type"] = EventType(d["type"])
         return cls(**d)

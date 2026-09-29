@@ -11,3 +11,5 @@ __pycache__/
 .env
 ondo.yaml
 agent/demo/
+*.sqlite-wal
+*.sqlite-shm

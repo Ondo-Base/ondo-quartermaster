@@ -41,7 +41,9 @@ class AnthropicMessagesAdapter(Adapter):
         version: str = "2023-06-01",
         timeout: float = 180.0,
     ) -> None:
-        self.base_url = (base_url or os.environ.get("ONDO_ANTHROPIC_BASE_URL") or "https://api.anthropic.com/v1").rstrip("/")
+        self.base_url = (
+            base_url or os.environ.get("ONDO_ANTHROPIC_BASE_URL") or "https://api.anthropic.com/v1"
+        ).rstrip("/")
         self.api_key = api_key or os.environ.get("ONDO_ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
         self.version = version
         self._client = client or httpx.AsyncClient(timeout=timeout)
@@ -144,9 +146,7 @@ def _encode_message(m: Message, vision: bool) -> dict[str, Any]:
         if isinstance(b, TextBlock):
             content.append({"type": "text", "text": b.text})
         elif isinstance(b, ImageBlock) and vision:
-            content.append(
-                {"type": "image", "source": {"type": "base64", "media_type": b.media_type, "data": b.data}}
-            )
+            content.append({"type": "image", "source": {"type": "base64", "media_type": b.media_type, "data": b.data}})
         elif isinstance(b, ToolCall):
             content.append({"type": "tool_use", "id": b.id, "name": b.name, "input": b.arguments})
         elif isinstance(b, ToolResultBlock):
