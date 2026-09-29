@@ -21,6 +21,7 @@ _STATES = {
     "STATE_CHECKED": "checked",
     "STATE_SHOWING": "showing",
     "STATE_SELECTED": "selected",
+    "STATE_ACTIVE": "active",
 }
 _CLICK_NAMES = ("click", "press", "activate", "toggle", "jump")
 
@@ -55,6 +56,22 @@ class AtspiBackend:
                     if role in ("frame", "window", "dialog", "alert"):
                         out.append(Window(id=f"{_pid(app)}#{i}", title=w.name or "", app=app.name or "", pid=_pid(app)))
         return out
+
+    def active(self) -> Window | None:
+        """The window in front, if the toolkit says any window is active."""
+        import pyatspi
+
+        with self._lock:
+            for app in self._desktop():
+                if app is None:
+                    continue
+                for i, w in enumerate(app):
+                    try:
+                        if w is not None and w.getState().contains(pyatspi.STATE_ACTIVE):
+                            return Window(id=f"{_pid(app)}#{i}", title=w.name or "", app=app.name or "", pid=_pid(app))
+                    except Exception:
+                        _log.debug("AT-SPI window vanished while checking focus", exc_info=True)
+        return None
 
     def _window_node(self, window: Window):
         pid, _, idx = window.id.rpartition("#")

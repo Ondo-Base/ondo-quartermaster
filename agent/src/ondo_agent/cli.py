@@ -116,10 +116,11 @@ def _search(a) -> int:
 def _tools_doc(a) -> int:
     from .browser.tools import browser_tools
     from .desktop.tools import desktop_tools
+    from .screen.tools import screen_tools
     from .tools.files import file_tools
     from .tools.spec import to_markdown
 
-    print(to_markdown(file_tools() + browser_tools() + desktop_tools()))
+    print(to_markdown(file_tools() + browser_tools() + desktop_tools() + screen_tools()).rstrip())
     return 0
 
 
@@ -135,6 +136,15 @@ def _legacy_app(a) -> int:
     import subprocess
 
     args = [sys.executable, "-m", "ondo_agent.demo.legacy_app", "--title", a.title]
+    if a.out:
+        args += ["--out", a.out]
+    return subprocess.call(args)
+
+
+def _remote_app(a) -> int:
+    import subprocess
+
+    args = [sys.executable, "-m", "ondo_agent.demo.remote_app"]
     if a.out:
         args += ["--out", a.out]
     return subprocess.call(args)
@@ -197,6 +207,8 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("legacy-app", help="open the sample legacy billing app (GTK) for the desktop rung")
     p.add_argument("--title", default="Legacy billing")
     p.add_argument("--out", default="")
+    p = sub.add_parser("remote-app", help="open the sample remote-session window (pixels only) for the screen rung")
+    p.add_argument("--out", default="")
     p = sub.add_parser("pair", help="pair this device with the control plane using the code from the web UI")
     p.add_argument("--server", required=True)
     p.add_argument("--code", required=True)
@@ -223,6 +235,7 @@ def main(argv: list[str] | None = None) -> None:
         "demo-data": _demo_data,
         "portal": _portal,
         "legacy-app": _legacy_app,
+        "remote-app": _remote_app,
     }
     if a.cmd in handlers:
         sys.exit(asyncio.run(handlers[a.cmd](a)))

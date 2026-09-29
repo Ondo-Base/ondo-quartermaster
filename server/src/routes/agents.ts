@@ -93,6 +93,31 @@ export function agentRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
       return { agent_id: agent.id, grants: hub.grantsFor(agent.id), delivered: hub.isConnected(agent.id) };
     });
 
+  // Screen watching: what is in front, and pausing or resuming it. Escape twice on
+  // the device pauses it there; only the person at the device resumes it.
+  function mine(agentId: string, userId: string): AgentRow | undefined {
+    return one<AgentRow>(db, "SELECT * FROM agents WHERE id = ? AND user_id = ? AND revoked = 0", agentId, userId);
+  }
+
+  app.get<{ Params: { id: string } }>("/api/agents/:id/screen", { preHandler: verified }, async (req, reply) => {
+    const agent = mine(req.params.id, req.authed!.user.id);
+    if (!agent) return reply.code(404).send({ error: "no such agent" });
+    const caps = hub.capabilitiesFor(agent.id) as { screen?: boolean; pixels?: boolean };
+    return { agent_id: agent.id, available: !!caps.screen, pixels: !!caps.pixels, screen: hub.screenFor(agent.id) };
+  });
+
+  app.post<{ Params: { id: string }; Body: { on?: boolean } }>("/api/agents/:id/watch", { preHandler: verified }, async (req, reply) => {
+    const a = req.authed!;
+    const agent = mine(req.params.id, a.user.id);
+    if (!agent) return reply.code(404).send({ error: "no such agent" });
+    const on = !!req.body?.on;
+    if (!hub.send(agent.id, { type: "watch", on, by: a.user.email })) {
+      return reply.code(409).send({ error: "The desktop agent is not connected." });
+    }
+    audit(db, a.user.org_id, `user:${a.user.email}`, on ? "agent.watch.resume_requested" : "agent.watch.pause_requested", agent.id);
+    return { ok: true };
+  });
+
   // The agent dials out here. One socket per agent, token in the Authorization header.
   app.get("/agent/ws", { websocket: true }, (socket, req) => {
     const auth = String(req.headers.authorization ?? "");

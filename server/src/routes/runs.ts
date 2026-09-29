@@ -54,7 +54,7 @@ export function runRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
     return rows.map(view);
   });
 
-  app.post<{ Body: { request?: string; agent_id?: string } }>("/api/runs", { preHandler: verified }, async (req, reply) => {
+  app.post<{ Body: { request?: string; agent_id?: string; context?: { window?: string } } }>("/api/runs", { preHandler: verified }, async (req, reply) => {
     const a = req.authed!;
     const request = String(req.body?.request ?? "").trim();
     if (!request) return reply.code(400).send({ error: "Say what you need." });
@@ -62,9 +62,19 @@ export function runRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
       "SELECT id FROM agents WHERE user_id = ? AND revoked = 0 AND (? IS NULL OR id = ?) ORDER BY last_seen DESC LIMIT 1",
       a.user.id, req.body?.agent_id ?? null, req.body?.agent_id ?? null);
     if (!agent) return reply.code(409).send({ error: "Pair the desktop agent first." });
-    const runId = hub.startRun(agent.id, a.user.id, a.user.email, request);
+    // "Ask about this screen": only the window the agent says is in front now.
+    // The agent checks the screen grant again before it reads anything.
+    let context: { window: string } | undefined;
+    if (req.body?.context?.window) {
+      const screen = hub.screenFor(agent.id);
+      if (!screen?.watching || screen.window !== req.body.context.window) {
+        return reply.code(409).send({ error: "That window is no longer in front. Bring it back, or ask without it." });
+      }
+      context = { window: screen.window };
+    }
+    const runId = hub.startRun(agent.id, a.user.id, a.user.email, request, context);
     if (!runId) return reply.code(409).send({ error: "The desktop agent is not connected. Open it on your computer and try again." });
-    audit(db, a.user.org_id, `user:${a.user.email}`, "run.requested", runId, { request, agent_id: agent.id });
+    audit(db, a.user.org_id, `user:${a.user.email}`, "run.requested", runId, { request, agent_id: agent.id, ...(context ? { context } : {}) });
     hub.publish(a.user.org_id, a.user.id, "run", { run_id: runId, status: "queued" });
     return { run_id: runId };
   });

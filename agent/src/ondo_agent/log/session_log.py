@@ -8,12 +8,15 @@ search, replay and fork.
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
 from .events import Event, EventType
+
+_log = logging.getLogger("ondo.agent")
 
 Subscriber = Callable[[Event], None]
 
@@ -59,7 +62,7 @@ class SessionLog:
             try:
                 sub(event)
             except Exception:  # a broken UI subscriber must not stop a run
-                pass
+                _log.warning("session log subscriber failed", exc_info=True)
         return event
 
     def close(self) -> None:
@@ -111,7 +114,7 @@ class SessionLog:
 
         return unsubscribe
 
-    def queue(self, loop: asyncio.AbstractEventLoop | None = None) -> tuple["asyncio.Queue[Event]", Callable[[], None]]:
+    def queue(self, loop: asyncio.AbstractEventLoop | None = None) -> tuple[asyncio.Queue[Event], Callable[[], None]]:
         """Subscribe and deliver onto an asyncio queue (for SSE bridging)."""
         loop = loop or asyncio.get_event_loop()
         q: asyncio.Queue[Event] = asyncio.Queue()
@@ -120,14 +123,14 @@ class SessionLog:
 
     # -- replay and fork --------------------------------------------------
     @classmethod
-    def load(cls, path: Path) -> "SessionLog":
+    def load(cls, path: Path) -> SessionLog:
         events = [Event.from_json(line) for line in path.read_text("utf-8").splitlines() if line.strip()]
         run_id = events[0].run_id if events else path.stem
         log = cls(run_id=run_id, path=None)
         log._events = events
         return log
 
-    def fork(self, at_seq: int, new_run_id: str, path: Path | None = None) -> "SessionLog":
+    def fork(self, at_seq: int, new_run_id: str, path: Path | None = None) -> SessionLog:
         """A new log carrying history up to ``at_seq`` inclusive.
 
         This is how a run is re-run with one tool changed or one model swapped,

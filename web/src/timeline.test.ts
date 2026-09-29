@@ -21,4 +21,13 @@ describe("buildTimeline", () => {
     expect(items[1]).toMatchObject({ status: "now", typed: [{ label: "Annual value — Halleck Logistics", value: "193725" }] });
     expect(items[2]).toMatchObject({ status: "error", error: "x is excluded" });
   });
+
+  it("shows what was typed into a window operated by pixels", () => {
+    const actions = [{ action: "type", target: "Annual value field", text: "193725", replace: true }, { action: "key", keys: "Tab" }];
+    const items = buildTimeline([
+      ev(0, "model_response", { text: "", tool_calls: [{ id: "s", name: "screen_act", arguments: { window: "Remote billing", actions } }] }),
+      ev(1, "step", { call_id: "s", title: "Operated Remote billing (2 actions)", tool: "screen_act", status: "done" }),
+    ]);
+    expect(items[0]).toMatchObject({ title: "Operated Remote billing (2 actions)", typed: [{ label: "Annual value field in Remote billing", value: "193725" }] });
+  });
 });

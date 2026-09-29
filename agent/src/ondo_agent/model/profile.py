@@ -48,7 +48,7 @@ class ModelProfile:
     cost_per_mtok_out: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
-    def with_overrides(self, **kw: Any) -> "ModelProfile":
+    def with_overrides(self, **kw: Any) -> ModelProfile:
         return replace(self, **kw)
 
 

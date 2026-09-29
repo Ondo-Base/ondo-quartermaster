@@ -62,6 +62,19 @@ def spreadsheet_question_policy(drive: Path):
     return policy
 
 
+def pytest_collection_modifyitems(config, items):
+    """In CI the desktop tests must run: a skip there would hide a broken stack."""
+    import os
+
+    if not os.environ.get("ONDO_REQUIRE_DESKTOP"):
+        return
+    from desktop_env import available, screen_available
+
+    missing = [n for n, ok in (("desktop", available()), ("screen", screen_available())) if not ok]
+    if missing:
+        raise pytest.UsageError(f"ONDO_REQUIRE_DESKTOP is set but the {' and '.join(missing)} stack is missing")
+
+
 @pytest.fixture(scope="session")
 def desktop():
     """One virtual desktop per test session: pyatspi binds to the first session bus

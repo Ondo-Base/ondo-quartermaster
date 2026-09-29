@@ -106,6 +106,9 @@ class ControlPlaneAgent:
             from .browser.session import BrowserSession
 
             self.browser = BrowserSession.from_config(cfg.section("browser"), cfg)
+        # Screen watching: which shared window is in front (see ``watch.py``).
+        self.watcher = None
+        self._watch_task: asyncio.Task | None = None
         # Local config is the starting point until the control plane sends grants.
         b = make_broker(cfg)
         self.state.grants = b.grants
@@ -136,7 +139,8 @@ class ControlPlaneAgent:
             # What the screen and input grants actually unlock on this agent.
             "screen": desktop,
             "input": desktop or browser,
-            "pixels": False,
+            # Pixels: the screen rung (screenshots, pointer and keyboard), where enabled.
+            "pixels": desktop and bool(self.cfg.section("screen").get("enabled")),
         }
 
     # -- inbound ----------------------------------------------------------------
@@ -166,6 +170,11 @@ class ControlPlaneAgent:
                 b.pause(by=msg.get("by", "user"))
             elif b:
                 b.resume(by=msg.get("by", "user"))
+        elif t == "watch" and self.watcher is not None:
+            if msg.get("on"):
+                self.watcher.resume()
+            else:
+                self.watcher.pause("paused from the web")
         elif t == "ping":
             self.send({"type": "pong"})
 
@@ -208,7 +217,12 @@ class ControlPlaneAgent:
             services={"browser": self.browser} if self.browser is not None else None,
         )
         try:
-            res = await a.harness.run(msg["request"])
+            a.harness.start(msg["request"])
+            if (msg.get("context") or {}).get("window"):
+                from .watch import inject_screen_context
+
+                await inject_screen_context(a.harness, str(msg["context"]["window"]))
+            res = await a.harness.run()
             self.send(
                 {
                     "type": "run_status",
@@ -227,7 +241,25 @@ class ControlPlaneAgent:
 
     # -- connection loop ----------------------------------------------------------
 
+    def _start_watcher(self) -> None:
+        d = self.cfg.section("desktop")
+        if self._watch_task is not None or not d.get("enabled") or self.cfg.section("screen").get("watch") is False:
+            return
+        from .desktop.session import DesktopSession
+        from .watch import ScreenWatcher
+
+        try:
+            desktop = DesktopSession.from_config(d)
+        except Exception as e:  # no accessibility stack here: nothing to watch with
+            log.warning("screen watching unavailable: %s", e)
+            return
+        self.watcher = ScreenWatcher(
+            desktop, self.state.broker, self.send, escape_twice=bool(d.get("escape_twice", True))
+        )
+        self._watch_task = asyncio.create_task(self.watcher.run())
+
     async def run_forever(self) -> None:
+        self._start_watcher()
         url = self.creds.server.replace("http://", "ws://").replace("https://", "wss://") + "/agent/ws"
         backoff = 1.0
         while not self._stopping:
@@ -240,6 +272,8 @@ class ControlPlaneAgent:
                 ) as ws:
                     backoff = 1.0
                     await ws.send(json.dumps(self._hello()))
+                    if self.watcher is not None:
+                        self.watcher.resend()
                     sender = asyncio.create_task(self._sender(ws))
                     try:
                         async for raw in ws:
@@ -265,6 +299,8 @@ class ControlPlaneAgent:
 
     def stop(self) -> None:
         self._stopping = True
+        if self._watch_task is not None:
+            self._watch_task.cancel()
         if self.browser is not None:
             asyncio.ensure_future(self.browser.aclose())
         for b in self.runs.values():

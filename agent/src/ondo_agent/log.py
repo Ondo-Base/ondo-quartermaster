@@ -210,6 +210,11 @@ class EventLog:
             if e.type == RUN_STARTED:
                 data = {**data, "forked_from": {"run_id": self.run_id, "seq": upto_seq}}
             child.append(e.type, e.source, data)
+        # Screenshots the copied events refer to come along, so the fork's context
+        # is the same pixels, not a stub.
+        from .blobs import BlobStore
+
+        BlobStore.beside(self.path).copy_to(BlobStore.beside(child.path))
         return child
 
 

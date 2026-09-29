@@ -30,9 +30,15 @@ const AUDITED: Record<string, string> = {
   window_access: "agent.window",
 };
 
+/** What the agent says is in front of the user, among the windows they shared.
+ * Held in memory only: it is presence, not a record. The window's contents never
+ * come here; only its name, and only for a window the screen grant covers. */
+export interface ScreenContext { window: string | null; title: string | null; watching: boolean; at: number }
+
 export class Hub {
   agents = new Map<string, { socket: WebSocket; userId: string; orgId: string }>();
   subscribers = new Set<Subscriber>();
+  screens = new Map<string, ScreenContext>();
 
   constructor(private db: DB) {}
 
@@ -87,6 +93,10 @@ export class Hub {
     return parse(r?.capabilities_json, {});
   }
 
+  screenFor(agentId: string): ScreenContext | null {
+    return this.isConnected(agentId) ? this.screens.get(agentId) ?? null : null;
+  }
+
   pushGrants(agentId: string, by: string, reason = ""): void {
     const grants = this.grantsFor(agentId);
     this.send(agentId, { type: "grants", by, reason, grants });
@@ -118,6 +128,7 @@ export class Hub {
       const cur = this.agents.get(agent.id);
       if (cur?.socket === socket) {
         this.agents.delete(agent.id);
+        this.screens.delete(agent.id);
         audit(this.db, org_id, `agent:${agent.id}`, "agent.disconnected", agent.id);
         this.publish(org_id, agent.user_id, "agent", { agent_id: agent.id, connected: false });
       }
@@ -134,6 +145,22 @@ export class Hub {
       return;
     }
     if (msg.type === "event") return this.ingest(agent, orgId, msg.event);
+    if (msg.type === "screen_context") {
+      const prev = this.screens.get(agent.id);
+      const next: ScreenContext = {
+        window: typeof msg.window === "string" && msg.window ? msg.window.slice(0, 300) : null,
+        title: typeof msg.title === "string" && msg.title && msg.window ? msg.title.slice(0, 300) : null,
+        watching: msg.watching !== false,
+        at: now(),
+      };
+      this.screens.set(agent.id, next);
+      if (prev?.watching !== next.watching) {
+        audit(this.db, orgId, `agent:${agent.id}`, next.watching ? "agent.watch.resumed" : "agent.watch.paused", agent.id,
+          { reason: String(msg.reason ?? "") });
+      }
+      this.publish(orgId, agent.user_id, "screen", { agent_id: agent.id, ...next });
+      return;
+    }
     if (msg.type === "run_status") {
       const r = one<{ user_id: string }>(this.db, "SELECT user_id FROM runs WHERE id = ? AND agent_id = ?", msg.run_id, agent.id);
       if (!r) return;
@@ -197,13 +224,13 @@ export class Hub {
 
   // -- runs ---------------------------------------------------------------------------
 
-  startRun(agentId: string, userId: string, userEmail: string, request: string): string | null {
+  startRun(agentId: string, userId: string, userEmail: string, request: string, context?: { window: string }): string | null {
     if (!this.isConnected(agentId)) return null;
     const runId = id("run").replace("_", "-");
     const t = now();
     run(this.db, "INSERT INTO runs (id, agent_id, user_id, request, title, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
       runId, agentId, userId, request, titleFor(request), "queued", t, t);
-    this.send(agentId, { type: "start_run", run_id: runId, request, user: userEmail });
+    this.send(agentId, { type: "start_run", run_id: runId, request, user: userEmail, ...(context ? { context } : {}) });
     return runId;
   }
 }

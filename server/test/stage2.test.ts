@@ -258,3 +258,43 @@ describe("audit export and SIEM", () => {
     expect(await forwardOnce(built.ctx.db, fake)).toBe(0); // nothing new
   });
 });
+
+describe("screen watching (Stage 5)", () => {
+  it("knows which shared window is in front, starts runs about it, and pauses on Escape", async () => {
+    const mara = await signedIn("mara.okonjo@northwind-ops.com");
+    const agent = await FakeAgent.pair(mara);
+    await mara.req("PUT", `/api/agents/${agent.id}/grants/screen`, { granted: true, scope: ["Remote billing"] });
+    await agent.next((m) => m.type === "grants" && m.grants.screen.granted);
+    expect((await mara.req("GET", `/api/agents/${agent.id}/screen`)).json.screen).toBeNull();
+
+    const win = "wfica — Remote billing — Citrix Workspace";
+    agent.send({ type: "screen_context", window: win, title: "Remote billing — Citrix Workspace", watching: true });
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await mara.req("GET", `/api/agents/${agent.id}/screen`)).json.screen).toMatchObject({ window: win, title: "Remote billing — Citrix Workspace", watching: true });
+    // Only the owner sees what is in front of them.
+    const admin = await signedIn("it.admin@northwind-ops.com");
+    expect((await admin.req("GET", `/api/agents/${agent.id}/screen`)).status).toBe(404);
+
+    // "Ask about this screen" names the window in front, and only that one.
+    const stale = await mara.req("POST", "/api/runs", { request: "What is this?", context: { window: "Personal mail" } });
+    expect(stale.status).toBe(409);
+    const ok = await mara.req("POST", "/api/runs", { request: "What does this say?", context: { window: win } });
+    expect(ok.status).toBe(200);
+    const start = await agent.next((m) => m.type === "start_run");
+    expect(start.context).toEqual({ window: win });
+
+    // Escape twice on the device pauses watching; the web can ask to resume it.
+    agent.send({ type: "screen_context", window: null, watching: false, reason: "escape_twice" });
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await mara.req("POST", "/api/runs", { request: "And now?", context: { window: win } })).status).toBe(409);
+    expect((await mara.req("POST", `/api/agents/${agent.id}/watch`, { on: true })).status).toBe(200);
+    expect(await agent.next((m) => m.type === "watch")).toMatchObject({ on: true });
+    const actions = (await admin.req("GET", "/api/admin/audit?limit=200")).json.map((e: any) => e.action);
+    expect(actions).toContain("agent.watch.paused");
+    expect(actions).toContain("agent.watch.resume_requested");
+
+    agent.ws.close();
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await mara.req("GET", `/api/agents/${agent.id}/screen`)).json.screen).toBeNull();
+  });
+});

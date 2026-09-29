@@ -7,16 +7,18 @@ import { Prompting } from "./Prompting";
 
 // -- shell-wide: the prompt overlay, a toast, and Escape twice -------------------------------------
 
-interface ShellCtx { openPrompt: (seed?: string) => void; toast: (msg: string) => void }
+/** What a prompt is about, when it is about the screen: the window in front. */
+export interface PromptContext { window: string; title?: string }
+interface ShellCtx { openPrompt: (seed?: string, context?: PromptContext) => void; toast: (msg: string) => void }
 const Ctx = createContext<ShellCtx>({ openPrompt: () => {}, toast: () => {} });
 export const useShell = () => useContext(Ctx);
 
 export function ShellProvider({ children }: { children: ReactNode }) {
-  const [prompt, setPrompt] = useState<{ open: boolean; seed: string }>({ open: false, seed: "" });
+  const [prompt, setPrompt] = useState<{ open: boolean; seed: string; context?: PromptContext }>({ open: false, seed: "" });
   const [toastMsg, setToast] = useState("");
   const lastEsc = useRef(0);
   const toast = useCallback((m: string) => { setToast(m); window.setTimeout(() => setToast(""), 4000); }, []);
-  const openPrompt = useCallback((seed = "") => setPrompt({ open: true, seed }), []);
+  const openPrompt = useCallback((seed = "", context?: PromptContext) => setPrompt({ open: true, seed, context }), []);
 
   useEffect(() => {
     const onKey = async (e: KeyboardEvent) => {
@@ -24,13 +26,16 @@ export function ShellProvider({ children }: { children: ReactNode }) {
       if (e.key !== "Escape" || prompt.open) return;
       const now = Date.now();
       if (now - lastEsc.current < 600) {
-        // Escape twice stops every running task. It goes straight to the control
-        // plane and the agent's kill switch; no model is involved.
+        // Escape twice stops every running task and stops watching the screen,
+        // as it does on the device. It goes straight to the control plane and the
+        // agent's kill switch; no model is involved.
         lastEsc.current = 0;
         const runs = await api<Run[]>("/api/runs").catch(() => [] as Run[]);
         const active = runs.filter(isActive);
         await Promise.all(active.map((r) => api(`/api/runs/${r.id}/stop`, { body: { reason: "Escape pressed twice" } }).catch(() => null)));
-        toast(active.length ? `Stopped ${active.length} running task${active.length === 1 ? "" : "s"}.` : "Nothing is running.");
+        const agents = (await api<{ agents: { id: string; connected: boolean }[] }>("/api/me").catch(() => ({ agents: [] }))).agents;
+        await Promise.all(agents.filter((a) => a.connected).map((a) => api(`/api/agents/${a.id}/watch`, { body: { on: false } }).catch(() => null)));
+        toast(active.length ? `Stopped ${active.length} running task${active.length === 1 ? "" : "s"} and stopped watching.` : "Nothing is running. Stopped watching the screen.");
       } else lastEsc.current = now;
     };
     window.addEventListener("keydown", onKey);
@@ -40,7 +45,7 @@ export function ShellProvider({ children }: { children: ReactNode }) {
   return (
     <Ctx.Provider value={{ openPrompt, toast }}>
       {children}
-      {prompt.open && <Prompting seed={prompt.seed} onClose={() => setPrompt({ open: false, seed: "" })} />}
+      {prompt.open && <Prompting seed={prompt.seed} context={prompt.context} onClose={() => setPrompt({ open: false, seed: "" })} />}
       {toastMsg && <div className="toast" role="status">{toastMsg}</div>}
     </Ctx.Provider>
   );

@@ -82,7 +82,10 @@ def _gate_probability(key: str, state: str) -> float:
     overwrites = "Overwrites an existing target." in state
     is_file = tool in _FILE_TOOLS
     passive = tool in _PASSIVE_TOOLS
-    enter_in_form = tool == "browser_press_key" and "enter" in action.lower() and "textbox" in element.lower()
+    enter_in_form = (tool == "browser_press_key" and "enter" in action.lower() and "textbox" in element.lower()) or (
+        # Pixels: Enter pressed into a remote session's form usually submits it.
+        tool == "screen_act" and bool(re.search(r"\b(enter|return)\b", element, re.I))
+    )
 
     if key == "gate.submits_to_system_of_record":
         if is_file or passive:

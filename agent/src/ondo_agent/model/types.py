@@ -67,7 +67,7 @@ class Message:
     blocks: list[Block] = field(default_factory=list)
 
     @classmethod
-    def text(cls, role: Role, text: str, *, untrusted: bool = False) -> "Message":
+    def text(cls, role: Role, text: str, *, untrusted: bool = False) -> Message:
         return cls(role=role, blocks=[TextBlock(text=text, untrusted=untrusted)])
 
     @property
