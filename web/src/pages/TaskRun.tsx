@@ -39,6 +39,9 @@ export function buildTimeline(events: RunEvent[]): Item[] {
       if (s?.tool === "browser_fill_form") for (const f of a.fields ?? []) typed.push({ label: f.name, value: String(f.value) });
       if (s?.tool === "browser_type") typed.push({ label: a.element ?? "Field", value: String(a.text) });
       if (s?.tool === "desktop_act" && a.action === "set_text") typed.push({ label: `${a.target} in ${a.window}`, value: String(a.text) });
+      if (s?.tool === "screen_act") {
+        for (const x of a.actions ?? []) if (x.action === "type") typed.push({ label: `${x.target ?? "The focused field"} in ${a.window}`, value: String(x.text) });
+      }
     }
     const diff = steps.map((s) => diffs.get(s.detail?.path ?? "")).find(Boolean);
     items.push({

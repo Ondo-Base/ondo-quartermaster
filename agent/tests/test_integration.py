@@ -223,3 +223,77 @@ async def test_desktop_run_through_the_control_plane(server, desktop, drive, tmp
             conn.cancel()
             app.terminate()
     assert json.loads(saved.read_text())["annual_value"] == "193725"
+
+
+async def _screen(c: httpx.AsyncClient, agent_id: str, pred):
+    s = (await c.get(f"/api/agents/{agent_id}/screen")).json()["screen"]
+    return s if s is not None and pred(s) else None
+
+
+async def test_ask_about_this_screen_through_the_control_plane(server, desktop, drive, tmp_path):
+    """Stage 5's screen watching through the whole stack: the agent says which
+    shared window is in front, a run started "about this screen" gets what that
+    window shows before its first turn, and Escape twice stops the watching."""
+    from desktop_env import screen_available
+
+    from ondo_agent.desktop.model import Window
+    from ondo_agent.models.adapters.scripted import say
+
+    if not screen_available():
+        pytest.skip("needs tesseract and gi-cairo")
+    app = desktop.launch_remote()
+    seen: list[str] = []
+
+    def policy(messages, tools):
+        seen.extend(m.text for m in messages if m.role == "user")
+        m = re.search(r"Status: ([^\n<]*)", "\n".join(seen))
+        return say(f"The session says: {m.group(1).strip()}." if m else "I cannot see a status.")
+
+    async with httpx.AsyncClient(base_url=server) as mara:
+        await _sign_in(mara, "mara.okonjo@northwind-ops.com")
+        code = (await mara.post("/api/pairing", json={})).json()["code"]
+        creds = await pair(server, code, tmp_path / "agent.json")
+        cfg = base_config(
+            drive, tmp_path, grants={}, desktop={"enabled": True, "escape_twice": True}, screen={"enabled": True}
+        )
+        agent = ControlPlaneAgent(cfg, creds, model_factory=lambda: scripted_client(policy, supports_vision=False))
+        conn = asyncio.create_task(agent.run_forever())
+        try:
+            await _wait(lambda: _connected(mara))
+            caps = (await mara.get("/api/pairing/status")).json()["agent"]["capabilities"]
+            assert caps["pixels"] is True
+            r = await mara.put(
+                f"/api/agents/{creds.agent_id}/grants/screen", json={"granted": True, "scope": ["Remote billing"]}
+            )
+            assert r.status_code == 200
+            # Bring the remote session to the front, as the user would.
+            from ondo_agent.desktop.atspi import AtspiBackend
+            from ondo_agent.screen.x11 import X11Screen
+
+            win: Window = next(w for w in AtspiBackend().windows() if w.title.startswith("Remote billing"))
+            X11Screen().activate(win)
+            front = await _wait(lambda: _screen(mara, creds.agent_id, lambda s: s["window"] == win.label))
+            assert front["watching"] is True
+
+            run_id = (
+                await mara.post(
+                    "/api/runs", json={"request": "What does the status say?", "context": {"window": win.label}}
+                )
+            ).json()["run_id"]
+            detail = await _wait(lambda: _status(mara, run_id, "finished"))
+            assert detail["run"]["answer"] == "The session says: Not saved."
+            injected = [e for e in detail["events"] if e["source"] == "harness.screen_context"]
+            assert [e["type"] for e in injected] == [L.WINDOW_ACCESS, L.CONTEXT_INJECTION]
+            # The control plane got the screenshot's hash, never its pixels.
+            [img] = injected[1]["data"]["images"]
+            assert len(img["sha256"]) == 64 and "data_b64" not in json.dumps(detail)
+
+            # Escape twice pauses watching; only the web resumes it.
+            desktop.keys("Escape", "Escape")
+            await _wait(lambda: _screen(mara, creds.agent_id, lambda s: not s["watching"]))
+            assert (await mara.post(f"/api/agents/{creds.agent_id}/watch", json={"on": True})).status_code == 200
+            await _wait(lambda: _screen(mara, creds.agent_id, lambda s: s["watching"] and s["window"] == win.label))
+        finally:
+            agent.stop()
+            conn.cancel()
+            app.terminate()

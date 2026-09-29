@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, api, greeting, hhmm, isActive, useData, type Approval, type Run, type RunEvent } from "../api";
+import { ApiError, api, greeting, hhmm, isActive, useData, useScreen, type Approval, type Run, type RunEvent } from "../api";
 import { AgentCard, Crumbs, RailFoot, RailHead, Shortcuts, TaskList, useShell } from "../components/Shell";
 import { Icon } from "../icons";
 import { useSession } from "../session";
@@ -198,11 +198,7 @@ function AssistantPanel() {
         </button>
       </header>
       <div style={{ flexGrow: 1, padding: 20, display: "flex", flexDirection: "column", gap: 12, overflowY: "auto" }}>
-        <div className="context-chip">
-          <span className={`dot ${agent?.connected ? "dot-accent qm-pulse" : "dot-ring-light"}`} />
-          <span className="grow">{!agent ? "No desktop agent paired" : agent.connected ? `${agent.grants.files.scope.length} granted folder${agent.grants.files.scope.length === 1 ? "" : "s"} · ${agent.grants.screen.granted && agent.capabilities?.screen ? `${agent.grants.screen.scope.length || "all"} shared window${agent.grants.screen.scope.length === 1 ? "" : "s"}` : "no windows shared"}` : "Desktop agent offline"}</span>
-          <Link to="/pair" style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-hover)" }}>Change</Link>
-        </div>
+        <ScreenChip />
         {asked.length === 0 && (
           <div className="bubble-bot qm-rise">
             Ask about a file or a figure, or say what to do next. I read only the folders you granted, and anything that changes something stops for you first.
@@ -221,6 +217,48 @@ function AssistantPanel() {
         <span className="caption">Escape twice stops any running task.</span>
       </form>
     </aside>
+  );
+}
+
+/** The context chip: what Ondo can see right now, and a way to ask about it. */
+function ScreenChip() {
+  const { me } = useSession();
+  const { openPrompt, toast } = useShell();
+  const agent = me?.agents[0];
+  const { data } = useScreen(agent?.id);
+  const s = data?.screen;
+  const shared = agent?.grants.screen.granted && agent.capabilities?.screen;
+  const summary = !agent ? "No desktop agent paired"
+    : !agent.connected ? "Desktop agent offline"
+    : `${agent.grants.files.scope.length} granted folder${agent.grants.files.scope.length === 1 ? "" : "s"} · ${shared ? `${agent.grants.screen.scope.length || "all"} shared window${agent.grants.screen.scope.length === 1 ? "" : "s"}` : "no windows shared"}`;
+  async function resume() {
+    try { await api(`/api/agents/${agent!.id}/watch`, { body: { on: true } }); } catch (e) { toast((e as ApiError).message); }
+  }
+  return (
+    <div className="col" style={{ gap: 8 }}>
+      <div className="context-chip">
+        <span className={`dot ${agent?.connected ? "dot-accent qm-pulse" : "dot-ring-light"}`} />
+        <span className="grow">{summary}</span>
+        <Link to="/pair" style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-hover)" }}>Change</Link>
+      </div>
+      {agent?.connected && shared && s && (
+        s.watching ? (
+          s.window && (
+            <div className="context-chip qm-rise">
+              <Icon name="monitor" size={15} color="var(--ink-secondary)" />
+              <span className="grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.window}>On screen: {s.title ?? s.window}</span>
+              <button type="button" className="link-btn" onClick={() => openPrompt("", { window: s.window!, title: s.title ?? undefined })}>Ask about this screen</button>
+            </div>
+          )
+        ) : (
+          <div className="context-chip qm-rise">
+            <Icon name="monitor" size={15} color="var(--ink-muted)" />
+            <span className="grow">Not watching the screen</span>
+            <button type="button" className="link-btn" onClick={resume}>Resume</button>
+          </div>
+        )
+      )}
+    </div>
   );
 }
 

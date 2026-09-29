@@ -26,7 +26,9 @@ export async function api<T = any>(path: string, opts: { method?: string; body?:
 export type GrantKind = "files" | "screen" | "input";
 export interface Grant { granted: boolean; scope: string[]; updated_by?: string; updated_at?: number }
 export type Grants = Record<GrantKind, Grant>;
-export interface Capabilities { files?: boolean; browser?: boolean; desktop?: boolean; screen?: boolean; input?: boolean; desktop_backend?: string | null }
+export interface Capabilities { files?: boolean; browser?: boolean; desktop?: boolean; screen?: boolean; input?: boolean; pixels?: boolean; desktop_backend?: string | null }
+/** Which shared window is in front, as the agent reports it. Only its name. */
+export interface ScreenState { agent_id: string; available: boolean; pixels: boolean; screen: { window: string | null; title: string | null; watching: boolean; at: number } | null }
 export interface Agent { id: string; hostname: string; os: string; connected: boolean; grants: Grants; capabilities?: Capabilities; last_seen?: number }
 export interface Me {
   user: { id: string; email: string; name: string; title: string; role: "member" | "admin" };
@@ -57,7 +59,7 @@ let source: EventSource | null = null;
 function ensureStream() {
   if (source || typeof EventSource === "undefined") return;
   source = new EventSource("/api/stream");
-  for (const ev of ["run", "run_event", "approval", "agent", "grants"]) {
+  for (const ev of ["run", "run_event", "approval", "agent", "grants", "screen"]) {
     source.addEventListener(ev, (e) => {
       let data: any = null;
       try { data = JSON.parse((e as MessageEvent).data); } catch { /* ignore */ }
@@ -100,6 +102,12 @@ export function useData<T>(path: string | null, relevant: (event: string, data: 
     timer.current = window.setTimeout(() => void load(), 120);
   }, [load]);
   return { data, error, reload: load, setData };
+}
+
+/** The window in front on this agent, live. */
+export function useScreen(agentId: string | undefined) {
+  return useData<ScreenState>(agentId ? `/api/agents/${agentId}/screen` : null,
+    (e, d) => ((e === "screen" || e === "agent") && d?.agent_id === agentId) || e === "grants");
 }
 
 // -- formatting -------------------------------------------------------------------------------

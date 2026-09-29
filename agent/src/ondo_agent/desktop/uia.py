@@ -61,6 +61,15 @@ class UiaBackend:
                     continue
         return out
 
+    def active(self) -> Window | None:
+        import ctypes
+
+        h = ctypes.windll.user32.GetForegroundWindow()
+        for w in self.windows():
+            if w.id == str(h):
+                return w
+        return None
+
     def _window(self, window: Window):
         for w in self._desktop().windows():
             if str(w.element_info.handle) == window.id or w.element_info.name == window.title:
