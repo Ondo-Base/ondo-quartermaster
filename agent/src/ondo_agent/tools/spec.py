@@ -124,6 +124,25 @@ def to_markdown(tools: list[ToolSpec]) -> str:
                 typ = v.get("type", "any")
                 out.append(f"| `{k}` | {typ} | {'yes' if k in req else 'no'} | {v.get('description', '')} |")
             out.append("")
+            for k, v in props.items():
+                items = v.get("items") or {}
+                if items.get("properties"):
+                    ireq = set(items.get("required", []))
+                    out += [
+                        f"Each item of `{k}`:",
+                        "",
+                        "| Field | Type | Required | Description |",
+                        "| --- | --- | --- | --- |",
+                    ]
+                    for ik, iv in items["properties"].items():
+                        t = iv.get("type", "any")
+                        typ = (t if isinstance(t, str) else " or ".join(t)) + (
+                            f" ({', '.join(map(str, iv['enum']))})" if iv.get("enum") else ""
+                        )
+                        out.append(
+                            f"| `{ik}` | {typ} | {'yes' if ik in ireq else 'no'} | {iv.get('description', '')} |"
+                        )
+                    out.append("")
     return "\n".join(out)
 
 

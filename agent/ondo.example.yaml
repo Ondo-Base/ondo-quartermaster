@@ -61,6 +61,24 @@ desktop:
   profiles:                 # per-app names for controls the app leaves unnamed
     "Legacy billing": {"push button#1": "Refresh"}
 
+screen:
+  enabled: false            # pixels (Stage 5): screenshots, pointer and keyboard; needs desktop.enabled
+  backend: auto             # x11 (Linux) | win32 (Windows) | quartz (macOS)
+  max_long_edge: 1280       # screenshots are sent no larger; the model profile can lower it
+  watch: true               # report which shared window is in front, for "Ask about this screen"
+  # Windows where pixels are the only rung, so the accessibility tree need not be
+  # read first. Everything else must be inspected before screen_act will act.
+  pixel_only_windows: ["*citrix*", "*wfica*", "*remote desktop*", "*mstsc*", "*vnc*", "*remmina*", "*freerdp*"]
+  ocr:
+    tesseract: tesseract    # local OCR for text-only models and the OCR grounder
+  grounding:
+    provider: ocr           # ocr (local, CPU) | vision | none
+    # A self-hosted grounding model keeps screenshots inside your network:
+    # provider: vision
+    # base_url: http://gpu-box.internal:8000/v1   # vLLM serving UI-TARS or OS-Atlas
+    # model: ui-tars-1.5-7b
+    # coords: absolute      # UI-TARS-1.5 and Qwen2.5-VL: absolute; UI-TARS 1.0, OS-Atlas: relative_1000
+
 budget:
   max_steps: 40
   max_tokens: 1000000

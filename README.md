@@ -4,12 +4,12 @@ An on-computer assistant for enterprise operations teams: it reads the files a
 team already works in, operates web portals through their accessibility tree, and
 stops for a person before anything is submitted, sent, overwritten or paid.
 
-This repository implements **Stages 0 to 4** of
+This repository implements **Stages 0 to 5** of
 [`docs/implementation-plan.md`](docs/implementation-plan.md) against the screens in
 [`design/`](design/README.md).
 
 ```
-agent/    Python desktop agent: harness, model layer, decision layer, tools (files, browser, desktop), permission broker
+agent/    Python desktop agent: harness, model layer, decision layer, tools (files, browser, desktop, screen), permission broker
 server/   TypeScript control plane: identity, device trust, pairing, grants, runs, audit, SIEM, SCIM
 web/      React web UI: landing, login flow, workspace, task run, files, admin console
 design/   The design canvas export (source of record for layout, colour and copy)
@@ -25,7 +25,9 @@ Browser ── HTTPS + SSE ──> Control plane (server/) <── websocket, ag
                             approvals, run history                                    model layer ──> gateway ──> any provider
                                                                                       decision layer (gates, screening)
                                                                                       tools: files, browser (Playwright MCP),
-                                                                                        desktop (accessibility tree)
+                                                                                        desktop (accessibility tree),
+                                                                                        screen (pixels, last resort; grounding
+                                                                                        by local OCR or a self-hosted model)
                                                                                       permission broker (3 grants, kill switch)
 ```
 
@@ -52,7 +54,9 @@ Browser ── HTTPS + SSE ──> Control plane (server/) <── websocket, ag
 Requirements: Python 3.11+, Node 22+ (for `node:sqlite`), and a Chromium for the
 browser rung (`npx playwright install chromium`, or set `ONDO_CHROMIUM`). For the
 desktop rung on Linux: `apt install python3-pyatspi gir1.2-atspi-2.0 gir1.2-gtk-3.0`
-(plus `xvfb xdotool` to run its tests), and a venv that can see them.
+(plus `xvfb xdotool` to run its tests), and a venv that can see them. For the screen
+rung (pixels): `apt install tesseract-ocr` for local OCR and grounding, and
+`python3-gi-cairo` for the sample remote-session window.
 
 ```sh
 npm install                                   # server, web, and Playwright MCP
@@ -95,6 +99,11 @@ and click for you", then try:
 - *Update Halleck Logistics' annual value in the legacy billing app from the signed contract.*
   Needs `desktop.enabled: true`, `ondo-agent legacy-app` running on the same
   desktop, and the screen grant for the window "Legacy billing".
+- *Update Halleck Logistics' annual value in the remote billing session from the signed contract.*
+  The same change in a window that is only pixels (`ondo-agent remote-app`, a
+  stand-in for Citrix). Needs `screen.enabled: true` as well, and the screen
+  grant for "Remote billing". With that window in front, the assistant panel
+  offers **Ask about this screen**.
 
 Sign in as `it.admin@northwind-ops.com` for the admin console: revoke a grant
 while a task waits at an approval and watch the run stop.
@@ -116,14 +125,15 @@ works without the control plane:
 ## Tests
 
 ```sh
-cd agent && .venv/bin/pytest -q      # 32 tests: stages 0 to 4, and the control-plane integration
+cd agent && .venv/bin/pytest -q      # 43 tests: stages 0 to 5, and the control-plane integration
 npm test                             # control plane (vitest) and web
 npm run typecheck
 ```
 
 The browser tests drive a real Chromium through Playwright MCP; the desktop tests
 start a throwaway X display, D-Bus session and AT-SPI registry and drive a real
-GTK app; the integration tests start the real control plane. Each skips if its
+GTK app; the screen tests drive a canvas-only GTK window by screenshots, OCR and
+synthesised input on that display; the integration tests start the real control plane. Each skips if its
 dependencies are missing. CI (`.github/workflows/ci.yml`) runs everything, including both
 model wire formats, and fails if the committed gate thresholds no longer match
 their measurement.
@@ -147,6 +157,7 @@ rules an admin needs to switch on to enforce them.
 | 2 · Login, policy, audit | An admin revokes a grant mid-run from the console and the run stops | `agent/tests/test_integration.py` (real server + real agent); `server/test/stage2.test.ts` |
 | 3 · The browser | A task spanning the document store and a web portal completes with no screenshots, passing with a text-only model | `test_stage3.py` — contracts from the granted folder keyed into the portal through the accessibility tree, one approval with exact before/after values, no images anywhere, origins enforced before and after navigation |
 | 4 · Semantic desktop control | A legacy app driven by element name, not coordinates, surviving a moved window and a rescaled display, picking its target without an orchestrator turn | `test_stage4.py` — a GTK billing app on a virtual display, run at 1× and 2× scale and moved and resized mid-task; the model names targets in words and the decision layer picks them; the submit is gated with the exact value; Escape twice (real keypresses) takes the keyboard back and stops the run. `test_integration.py` runs the same task through the control plane |
+| 5 · Pixels, as the floor | A Citrix or remote-desktop window can be operated; the harness picks pixels only after trying the ladder; grounding can be switched to a locally hosted model without touching the executor | `test_stage5.py`: a window that is one canvas (the Citrix stand-in) operated at 1x and 2x, moved and resized mid-task, by a text-only model naming targets and by a vision model giving pixels in an 800-pixel screenshot. `screen_act` refuses until `desktop_inspect` found nothing to act on. The submit is gated with the typed value, and Escape is never sent. The same task passes with grounding pointed at a local UI-TARS-style endpoint by configuration alone. `test_integration.py` covers screen watching and "Ask about this screen" through the control plane |
 
 ## What is not done, or not verified here
 
@@ -174,10 +185,28 @@ Said plainly, per the plan's own rule about never claiming what is not there:
   model is configured. It refuses vague targets rather than guessing, but real
   enterprise apps will need per-app profiles (`desktop.profiles`) for unnamed and
   duplicate controls.
-- **Stages 5–6.5 are not started**: pixels and screenshots, screen watching as a
-  mode, first-party MCP connectors, saved workflows, and the local decision
-  model. The UI says so where it matters (there is no saved-workflows list, and
-  windows are read through their accessibility tree only).
+- **The screen rung has only run on Linux (X11).** The Windows (`screen/win32.py`)
+  and macOS (`screen/quartz.py`) screen backends are written to the same
+  interface but have never executed; both are marked UNTESTED. Run
+  `test_stage5.py` on each before relying on them. Wayland sessions are not
+  supported: they do not allow one app to capture or drive another's window.
+- **No real Citrix or RDP client was driven.** The remote session is a stand-in:
+  a GTK window drawn on one canvas, which is how such a window looks locally, but
+  real sessions add compression artefacts, latency and their own keyboard
+  handling. Try one before promising it.
+- **No real grounding model was run.** The vision grounder speaks the
+  OpenAI-compatible API and parses the UI-TARS, OS-Atlas and Qwen-VL coordinate
+  formats. It was tested against a local stand-in endpoint, not a UI-TARS or
+  OS-Atlas deployment. The OCR grounder is real but narrow: it finds text and the
+  input box beside a label, and refuses what it cannot see (icons, unlabelled
+  controls) rather than guessing. Those need a vision grounder.
+- **The prompt overlay is the web UI's**, over the Ondo window, not a native
+  overlay drawn over other apps. Screen watching on Linux reads which window is
+  active from AT-SPI; a window manager or toolkit that does not report it shows
+  as nothing on screen.
+- **Stages 6–6.5 are not started**: first-party MCP connectors, saved workflows,
+  and the local decision model. The UI says so where it matters (there is no
+  saved-workflows list).
 - **Office round-trips**: `openpyxl` keeps formulas (and macros in `.xlsm`) but
   drops charts and images on save. The plan's small COM path for what the
   libraries cannot do is not built.

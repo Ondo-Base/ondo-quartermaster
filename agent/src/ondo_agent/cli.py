@@ -116,10 +116,11 @@ def _search(a) -> int:
 def _tools_doc(a) -> int:
     from .browser.tools import browser_tools
     from .desktop.tools import desktop_tools
+    from .screen.tools import screen_tools
     from .tools.files import file_tools
     from .tools.spec import to_markdown
 
-    print(to_markdown(file_tools() + browser_tools() + desktop_tools()))
+    print(to_markdown(file_tools() + browser_tools() + desktop_tools() + screen_tools()).rstrip())
     return 0
 
 
