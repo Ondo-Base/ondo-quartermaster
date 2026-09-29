@@ -1,0 +1,46 @@
+# The configuration installed by deploy/windows/intune/install.ps1 to
+# %ProgramData%\Ondo\ondo.yaml, writable only by administrators. The control plane
+# address and enrollment token come from device management (the ADMX policy),
+# which also narrows everything below; once connected, the control plane's
+# organisation policy and each person's grants apply.
+
+agent:
+  # Per person, in their own profile: runs, consents and decision labels.
+  runs_dir: ${LOCALAPPDATA}/Ondo/runs
+  decision_labels: ${LOCALAPPDATA}/Ondo/decisions.jsonl
+  consents_file: ${LOCALAPPDATA}/Ondo/consents.json
+
+models:
+  profiles_file: profiles.yaml
+  # Your organisation's model gateway (see deploy/litellm.yaml); its key is the
+  # machine environment variable ONDO_GATEWAY_KEY, set by install.ps1.
+  orchestrator: ${ONDO_MODEL_PROFILE:-gateway}
+
+# Nothing is granted until the person grants it in Ondo on the web.
+grants:
+  files: {granted: false}
+  screen: {granted: false}
+  input: {granted: false}
+
+policy:
+  excluded_paths: ["**/HR/**", "**/*payroll*", "**/*password*"]
+  excluded_windows: ["Personal mail", "HR portal", "Password manager"]
+  writes_require_approval: true
+  allowed_connectors: []   # the control plane's organisation policy decides
+
+decision:
+  provider: rules
+
+screening:
+  enabled: true
+  threshold: 0.5
+
+desktop:
+  enabled: true
+
+screen:
+  enabled: true
+  grounding: {provider: ocr}
+
+# Connectors are your organisation's MCP servers, declared here by an administrator.
+connectors: {}

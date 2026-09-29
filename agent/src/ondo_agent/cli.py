@@ -182,6 +182,12 @@ def _portal(a) -> int:
             return 0
 
 
+def _platform_check(a) -> int:
+    from .platform_check import main as check
+
+    return check(a)
+
+
 async def _pair(a) -> int:
     from .connection import pair
 
@@ -253,6 +259,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--server", required=True)
     p.add_argument("--code", required=True)
     p.add_argument("--credentials", default=str(DEFAULT_CREDS))
+    p = sub.add_parser("platform-check", help="check this computer's desktop and screen stack against one window")
+    p.add_argument("--window", required=True, help="part of the title or app name of a window that is open")
+    p.add_argument("--type", default="", help="text to put in its first text field, then read back")
+    p.add_argument("--out", default="", help="folder to save the screenshot in")
+    p.add_argument("--backend", default="auto", help="auto, uia or ax (desktop); the screen backend follows")
+    p.add_argument("--no-screen", action="store_true", help="skip the screenshot and OCR")
     p = sub.add_parser("enroll", help="set this computer up with the organisation's enrollment token")
     p.add_argument("--server", default="", help="default: the ControlPlaneUrl device management set")
     p.add_argument("--token", default="", help="default: the EnrollmentToken device management set")
@@ -274,6 +286,7 @@ def main(argv: list[str] | None = None) -> None:
     a = ap.parse_args(argv)
     handlers = {"run": _run, "replay": _replay, "fork": _fork, "pair": _pair, "enroll": _enroll, "connect": _connect}
     sync = {
+        "platform-check": _platform_check,
         "trajectory": _trajectory,
         "search": _search,
         "tools-doc": _tools_doc,
