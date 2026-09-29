@@ -264,12 +264,13 @@ export class Hub {
 
   // -- runs ---------------------------------------------------------------------------
 
-  startRun(agentId: string, userId: string, userEmail: string, request: string, context?: { window: string }): string | null {
+  startRun(agentId: string, userId: string, userEmail: string, request: string, context?: { window: string },
+    workflow?: { id: string; name: string }): string | null {
     if (!this.isConnected(agentId)) return null;
     const runId = id("run").replace("_", "-");
     const t = now();
-    run(this.db, "INSERT INTO runs (id, agent_id, user_id, request, title, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-      runId, agentId, userId, request, titleFor(request), "queued", t, t);
+    run(this.db, "INSERT INTO runs (id, agent_id, user_id, request, title, status, workflow_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+      runId, agentId, userId, request, workflow?.name ?? titleFor(request), "queued", workflow?.id ?? null, t, t);
     this.send(agentId, { type: "start_run", run_id: runId, request, user: userEmail, ...(context ? { context } : {}) });
     return runId;
   }

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { ApiError, EFFECT_LABELS, api, hhmm, isActive, useData, type Approval, type Capabilities, type Grants, type Run, type RunEvent } from "../api";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import { ApiError, EFFECT_LABELS, api, hhmm, isActive, useData, type Approval, type Capabilities, type Grants, type Run, type RunEvent, type Workflow } from "../api";
 import { BackHome, Crumbs, RailFoot, RailHead, TaskList, useShell } from "../components/Shell";
 import { Icon } from "../icons";
 
@@ -73,6 +73,7 @@ export function buildTimeline(events: RunEvent[]): Item[] {
 export function TaskRun() {
   const { id = "" } = useParams();
   const { openPrompt, toast } = useShell();
+  const nav = useNavigate();
   const { data, error, reload } = useData<Detail>(`/api/runs/${id}`, (_e, d) => d?.run_id === id || _e === "approval");
   const [tab, setTab] = useState<"steps" | "trajectory">("steps");
   const timeline = useMemo(() => buildTimeline(data?.events ?? []), [data]);
@@ -87,6 +88,18 @@ export function TaskRun() {
 
   async function act(path: string, body: unknown = {}) {
     try { await api(`/api/runs/${run.id}/${path}`, { body }); void reload(); } catch (e) { toast((e as ApiError).message); }
+  }
+
+  async function saveWorkflow() {
+    const name = window.prompt("Name this workflow", run.title)?.trim();
+    if (!name) return;
+    try {
+      const w = await api<Workflow>("/api/workflows", { body: { from_run: run.id, name } });
+      toast(`Saved “${w.name}”. It is in Saved workflows on the home page.`);
+      nav(`/app/workflows/${w.id}`);
+    } catch (e) {
+      toast((e as ApiError).message);
+    }
   }
 
   const statusLine = {
@@ -121,6 +134,9 @@ export function TaskRun() {
           {active && run.status !== "paused" && <button className="btn" onClick={() => act("pause")}>Pause</button>}
           {run.status === "paused" && <button className="btn" onClick={() => act("resume")}>Resume</button>}
           {active && <button className="btn" onClick={() => act("stop", { reason: "Taken over by the user" })}>Take over</button>}
+          {!active && (run.workflow_id
+            ? <Link to={`/app/workflows/${run.workflow_id}`} className="btn">Open the workflow</Link>
+            : <button className="btn" onClick={() => void saveWorkflow()}>Save as workflow</button>)}
           {!active && <button className="btn" onClick={() => openPrompt(run.request)}>Run again</button>}
         </header>
 

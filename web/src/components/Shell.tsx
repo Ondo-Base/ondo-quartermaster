@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, NavLink, useNavigate } from "react-router-dom";
-import { api, isActive, runStatusLine, useData, type Run } from "../api";
+import { api, isActive, runStatusLine, useData, workflowMeta, type Run, type Workflow } from "../api";
 import { Icon } from "../icons";
 import { useSession } from "../session";
 import { Prompting } from "./Prompting";
@@ -101,6 +101,27 @@ export function TaskList({ activeId, limit = 6 }: { activeId?: string; limit?: n
             <span className="grow col" style={{ gap: 2, minWidth: 0 }}>
               <span className="t">{r.title}</span>
               <span className="m">{runStatusLine(r)}</span>
+            </span>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function SavedWorkflows({ activeId }: { activeId?: string }) {
+  const { data } = useData<Workflow[]>("/api/workflows", (e) => e === "workflow" || e === "run");
+  return (
+    <div className="col" style={{ gap: 8 }}>
+      <span className="rail-label">Saved workflows</span>
+      <div className="rail-list">
+        {data && data.length === 0 && <span className="caption rail-muted" style={{ padding: "0 12px" }}>None yet. Save one from a finished task.</span>}
+        {(data ?? []).map((w) => (
+          <Link key={w.id} to={`/app/workflows/${w.id}`} className={`rail-row${w.id === activeId ? " active" : ""}`}>
+            <Icon name="workflow" size={16} color={w.id === activeId ? "var(--rail-accent)" : "var(--on-rail-muted)"} />
+            <span className="grow col" style={{ gap: 2, minWidth: 0 }}>
+              <span className="t">{w.name}</span>
+              <span className="m">{workflowMeta(w)}</span>
             </span>
           </Link>
         ))}

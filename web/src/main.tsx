@@ -7,6 +7,7 @@ import { PairAgent, SignIn, SigningIn, Verify } from "./pages/Auth";
 import { Files } from "./pages/Files";
 import { Landing } from "./pages/Landing";
 import { TaskRun } from "./pages/TaskRun";
+import { WorkflowPage } from "./pages/Workflow";
 import { Workspace } from "./pages/Workspace";
 import { RequireVerified, SessionProvider } from "./session";
 import "./styles.css";
@@ -24,6 +25,7 @@ function App() {
           <Route path="/app" element={<RequireVerified><Workspace /></RequireVerified>} />
           <Route path="/app/runs/:id" element={<RequireVerified><TaskRun /></RequireVerified>} />
           <Route path="/app/files" element={<RequireVerified><Files /></RequireVerified>} />
+          <Route path="/app/workflows/:id" element={<RequireVerified><WorkflowPage /></RequireVerified>} />
           <Route path="/admin" element={<RequireVerified admin><AdminConsole /></RequireVerified>} />
           <Route path="/admin/audit" element={<RequireVerified admin><AuditLog /></RequireVerified>} />
           <Route path="*" element={<Navigate to="/" replace />} />

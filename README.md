@@ -118,6 +118,11 @@ and click for you", then try:
   inviting Priya each stop for approval, and her address is flagged as outside
   the organisation. The team-sites connector works the same way: changing a
   shared document shows a diff and who changed it last.
+- **Saved workflows.** On a finished task, **Save as workflow** keeps its request
+  under a name. It then appears under **Saved workflows** in the rail and as a
+  suggestion in the prompt overlay. Running one starts an ordinary task: same
+  grants, gates and approvals. Its page lets you edit the request for one run or
+  for good, and lists its past runs.
 
 Sign in as `it.admin@northwind-ops.com` for the admin console: revoke a grant
 while a task waits at an approval and watch the run stop.
@@ -172,7 +177,7 @@ rules an admin needs to switch on to enforce them.
 | 3 · The browser | A task spanning the document store and a web portal completes with no screenshots, passing with a text-only model | `test_stage3.py` — contracts from the granted folder keyed into the portal through the accessibility tree, one approval with exact before/after values, no images anywhere, origins enforced before and after navigation |
 | 4 · Semantic desktop control | A legacy app driven by element name, not coordinates, surviving a moved window and a rescaled display, picking its target without an orchestrator turn | `test_stage4.py` — a GTK billing app on a virtual display, run at 1× and 2× scale and moved and resized mid-task; the model names targets in words and the decision layer picks them; the submit is gated with the exact value; Escape twice (real keypresses) takes the keyboard back and stops the run. `test_integration.py` runs the same task through the control plane |
 | 5 · Pixels, as the floor | A Citrix or remote-desktop window can be operated; the harness picks pixels only after trying the ladder; grounding can be switched to a locally hosted model without touching the executor | `test_stage5.py`: a window that is one canvas (the Citrix stand-in) operated at 1x and 2x, moved and resized mid-task, by a text-only model naming targets and by a vision model giving pixels in an 800-pixel screenshot. `screen_act` refuses until `desktop_inspect` found nothing to act on. The submit is gated with the typed value, and Escape is never sent. The same task passes with grounding pointed at a local UI-TARS-style endpoint by configuration alone. `test_integration.py` covers screen watching and "Ask about this screen" through the control plane |
-| 6 · Connectors and scale (first part) | IT can deploy through Intune and control MCP access from Settings without talking to us. **Built so far:** per-connector consent; ticketing, mail, calendar and team-sites connectors | `test_stage6.py`, against a real MCP server over stdio. The first use of Ticketing asks the person once, and the answer is remembered until revoked; no is final for the run. A connector policy does not allow is never started or offered. A public reply is gated as sending externally, with the exact text; an update shows before and after. A ticket carrying an injection is flagged and taints the run. `test_stage6_workplace.py`: a reply by mail and an invitation by calendar, each gated as sending externally with outside addresses flagged; drafts and events on your own calendar need no approval unless the run is tainted; a shared-document change shows its diff; an email carrying instructions taints the run. `test_integration.py`: consent given from the web and recorded by the control plane; revoking it from the web stops a run that was using it. Deployment through Intune, the Windows ODR, saved workflows and the other connectors are not built yet |
+| 6 · Connectors and scale (first part) | IT can deploy through Intune and control MCP access from Settings without talking to us. **Built so far:** per-connector consent; ticketing, mail, calendar and team-sites connectors; saved workflows | `test_stage6.py`, against a real MCP server over stdio. The first use of Ticketing asks the person once, and the answer is remembered until revoked; no is final for the run. A connector policy does not allow is never started or offered. A public reply is gated as sending externally, with the exact text; an update shows before and after. A ticket carrying an injection is flagged and taints the run. `test_stage6_workplace.py`: a reply by mail and an invitation by calendar, each gated as sending externally with outside addresses flagged; drafts and events on your own calendar need no approval unless the run is tainted; a shared-document change shows its diff; an email carrying instructions taints the run. `server/test/stage2.test.ts`: a workflow saved from a task runs its request again under its name (or an edited request, once), lists its runs, and is private to its owner. `test_integration.py`: consent given from the web and recorded by the control plane; revoking it from the web stops a run that was using it. Deployment through Intune, the Windows ODR, saved workflows and the other connectors are not built yet |
 
 ## What is not done, or not verified here
 
@@ -221,7 +226,6 @@ Said plainly, per the plan's own rule about never claiming what is not there:
   as nothing on screen.
 - **Stage 6 is partly built.** Connector consent and the ticketing connector
   are done. Not built yet:
-  - saved workflows (there is no saved-workflows list);
   - long-running tasks;
   - Windows ODR registration and Intune deployment.
 

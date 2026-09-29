@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api, greeting, hhmm, isActive, useData, useScreen, type Approval, type Run, type RunEvent } from "../api";
-import { AgentCard, Crumbs, RailFoot, RailHead, Shortcuts, TaskList, useShell } from "../components/Shell";
+import { AgentCard, Crumbs, RailFoot, RailHead, SavedWorkflows, Shortcuts, TaskList, useShell } from "../components/Shell";
 import { Icon } from "../icons";
 import { useSession } from "../session";
 
@@ -38,6 +38,7 @@ export function Workspace() {
         <RailHead newTask />
         <div className="rail-body" style={{ paddingTop: 16 }}>
           <TaskList />
+          <SavedWorkflows />
           <Shortcuts />
           <AgentCard />
         </div>
