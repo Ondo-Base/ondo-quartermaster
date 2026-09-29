@@ -93,6 +93,24 @@ export function agentRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
       return { agent_id: agent.id, grants: hub.grantsFor(agent.id), delivered: hub.isConnected(agent.id) };
     });
 
+  // Connectors: the person allows each one from a run (a consent approval, recorded by
+  // the hub). Here it is taken back, by them or by an administrator in their org.
+  app.delete<{ Params: { id: string; connector: string } }>("/api/agents/:id/connectors/:connector", { preHandler: verified }, async (req, reply) => {
+    const a = req.authed!;
+    const agent = one<AgentRow>(db, "SELECT * FROM agents WHERE id = ? AND revoked = 0", req.params.id);
+    if (!agent) return reply.code(404).send({ error: "no such agent" });
+    const owner = one<{ org_id: string }>(db, "SELECT org_id FROM users WHERE id = ?", agent.user_id)!;
+    const isOwner = agent.user_id === a.user.id;
+    if (!isOwner && !(a.user.role === "admin" && owner.org_id === a.user.org_id)) return reply.code(403).send({ error: "not your agent" });
+    const gone = run(db, "DELETE FROM consents WHERE agent_id = ? AND connector = ?", agent.id, req.params.connector).changes;
+    if (!gone) return reply.code(404).send({ error: "That connector was not allowed." });
+    const by = isOwner ? a.user.email : `admin:${a.user.email}`;
+    audit(db, owner.org_id, `user:${a.user.email}`, "connector.revoked", agent.id, { connector: req.params.connector, by_admin: !isOwner });
+    hub.pushGrants(agent.id, by, isOwner ? "revoked by the user" : "revoked by an administrator");
+    hub.publish(owner.org_id, agent.user_id, "grants", { agent_id: agent.id, kind: `connector:${req.params.connector}`, granted: false });
+    return { agent_id: agent.id, connectors: hub.consentsFor(agent.id), delivered: hub.isConnected(agent.id) };
+  });
+
   // Screen watching: what is in front, and pausing or resuming it. Escape twice on
   // the device pauses it there; only the person at the device resumes it.
   function mine(agentId: string, userId: string): AgentRow | undefined {

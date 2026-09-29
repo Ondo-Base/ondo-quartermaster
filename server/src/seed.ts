@@ -11,7 +11,7 @@ export function seedDemo(db: DB): void {
   if (one(db, "SELECT id FROM orgs WHERE id = 'org_northwind'")) return;
   const t = now();
   run(db, "INSERT INTO orgs (id, name, domain, policy_json) VALUES (?,?,?,?)",
-    "org_northwind", "Northwind operations", "northwind-ops.com", JSON.stringify(DEFAULT_POLICY));
+    "org_northwind", "Northwind operations", "northwind-ops.com", JSON.stringify({ ...DEFAULT_POLICY, allowed_connectors: ["ticketing"] }));
   const pw = hashPassword(DEMO_PASSWORD);
   const users: [string, string, string, string, string][] = [
     ["usr_mara", "mara.okonjo@northwind-ops.com", "Mara Okonjo", "Revenue operations", "member"],

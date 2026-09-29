@@ -297,3 +297,86 @@ async def test_ask_about_this_screen_through_the_control_plane(server, desktop, 
             agent.stop()
             conn.cancel()
             app.terminate()
+
+
+async def test_connector_consent_and_revocation_through_the_control_plane(server, drive, tmp_path):
+    """Stage 6's consent through the whole stack: the first use of the ticketing
+    connector is allowed from the web, recorded by the control plane and not asked
+    again; revoking it from the web stops a run that is using it."""
+    import sys
+
+    from ondo_agent.demo.policies import ticket_reply_policy
+    from ondo_agent.models.adapters.scripted import call, say
+
+    store = tmp_path / "tickets.json"
+    second = iter(
+        [
+            call(("ticketing_get_ticket", {"id": "NW-1043"})),
+            call(("ticketing_add_comment", {"id": "NW-1043", "body": "Looking into it.", "public": True})),
+            say("done"),
+        ]
+    )
+    policies = iter([ticket_reply_policy(drive), lambda m, t: next(second)])
+    cfg = base_config(
+        drive,
+        tmp_path,
+        grants={},
+        connectors={
+            "ticketing": {"command": [sys.executable, "-m", "ondo_agent.demo.ticketing_server", "--store", str(store)]}
+        },
+    )
+    async with httpx.AsyncClient(base_url=server) as mara:
+        await _sign_in(mara, "mara.okonjo@northwind-ops.com")
+        code = (await mara.post("/api/pairing", json={})).json()["code"]
+        creds = await pair(server, code, tmp_path / "agent.json")
+        agent = ControlPlaneAgent(cfg, creds, model_factory=lambda: scripted_client(next(policies)))
+        conn = asyncio.create_task(agent.run_forever())
+        try:
+            await _wait(lambda: _connected(mara))
+            me = (await mara.get("/api/me")).json()
+            assert [(c["id"], c["allowed_by_policy"], c["consent"]) for c in me["agents"][0]["connectors"]] == [
+                ("ticketing", True, None)
+            ]
+            await mara.put(f"/api/agents/{creds.agent_id}/grants/files", json={"granted": True, "scope": [str(drive)]})
+            await _wait(lambda: _async(agent.state.grants["files"].granted))
+
+            run_id = (await mara.post("/api/runs", json={"request": "Reply to Halleck's renewal ticket."})).json()[
+                "run_id"
+            ]
+            kinds = []
+            for _ in range(3):  # consent, then the reply, then the status change
+                [p] = await _wait(lambda: _pending(mara))
+                kinds.append((p["kind"], p["connector"], p["effects"]))
+                assert (await mara.post(f"/api/approvals/{p['id']}", json={"approved": True})).status_code == 200
+                await _wait(lambda pid=p["id"]: _gone(mara, pid))
+            assert kinds == [
+                ("consent", "ticketing", []),
+                ("effect", None, ["sends_externally"]),
+                ("effect", None, ["submits_to_system_of_record"]),
+            ]
+            await _wait(lambda: _status(mara, run_id, "finished"))
+            consent = (await mara.get("/api/me")).json()["agents"][0]["connectors"][0]["consent"]
+            assert consent["by"] == "mara.okonjo@northwind-ops.com"
+            assert json.loads(store.read_text())["NW-1042"]["status"] == "pending"
+
+            # The second run is not asked again; revoking while it waits stops it.
+            run2 = (await mara.post("/api/runs", json={"request": "Update the Pemberton ticket."})).json()["run_id"]
+            [p] = await _wait(lambda: _pending(mara))
+            assert p["kind"] == "effect" and p["run_id"] == run2
+            r = await mara.delete(f"/api/agents/{creds.agent_id}/connectors/ticketing")
+            assert r.status_code == 200 and r.json()["delivered"]
+            detail = await _wait(lambda: _status(mara, run2, "stopped"))
+            assert detail["run"]["reason"] == "Consent for ticketing was revoked by the user."
+            assert not [c for c in json.loads(store.read_text())["NW-1043"]["comments"]]
+            async with httpx.AsyncClient(base_url=server) as admin:
+                await _sign_in(admin, "it.admin@northwind-ops.com")
+                actions = [r["action"] for r in (await admin.get("/api/admin/audit", params={"limit": 1000})).json()]
+            for a in ("connector.consented", "connector.revoked", "agent.connector.read", "agent.connector.changed"):
+                assert a in actions, a
+        finally:
+            agent.stop()
+            conn.cancel()
+
+
+async def _gone(c: httpx.AsyncClient, approval_id: str):
+    return not any(p["id"] == approval_id for p in (await c.get("/api/approvals", params={"status": "pending"})).json())

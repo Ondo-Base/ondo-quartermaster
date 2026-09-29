@@ -160,7 +160,9 @@ export function TaskRun() {
                       <div className="step-rail"><span className="step-next" /></div>
                       <div className="step-body" style={{ paddingBottom: 0 }}>
                         <span style={{ fontSize: 16, color: "var(--ink-muted)" }}>Next: {pending.title.charAt(0).toLowerCase() + pending.title.slice(1)}</span>
-                        <p className="ui muted">Blocked by an approval gate on {pending.effects.map((e) => EFFECT_LABELS[e] ?? e).join(" and ")}.</p>
+                        <p className="ui muted">{pending.kind === "consent"
+                          ? "Waiting for you to allow this connector. Nothing has been read from it."
+                          : `Blocked by an approval gate on ${pending.effects.map((e) => EFFECT_LABELS[e] ?? e).join(" and ")}.`}</p>
                       </div>
                     </div>
                   )}
@@ -258,6 +260,53 @@ const GERUND: Record<string, string> = { send: "sending", submit: "submitting", 
 const fmt = (v: string | null | undefined) => (v != null && v !== "" && Number.isFinite(Number(v)) ? Number(v).toLocaleString("en-GB") : v ?? "");
 
 export function ApprovalCard({ approval, onDone }: { approval: Approval; onDone: () => void }) {
+  if (approval.kind === "consent") return <ConsentCard approval={approval} onDone={onDone} />;
+  return <EffectCard approval={approval} onDone={onDone} />;
+}
+
+/** A connector's first use: may Ondo use it at all? Yes lasts until revoked in Files and connections. */
+function ConsentCard({ approval, onDone }: { approval: Approval; onDone: () => void }) {
+  const { toast } = useShell();
+  const [busy, setBusy] = useState(false);
+  const name = approval.title.replace(/^Let Ondo use /, "").replace(/\?$/, "");
+  async function decide(approved: boolean) {
+    setBusy(true);
+    try {
+      await api(`/api/approvals/${approval.id}`, { body: { approved } });
+      toast(approved ? `${name} allowed. Ondo is carrying on.` : `${name} not allowed. Ondo carries on without it.`);
+      onDone();
+    } catch (e) {
+      toast((e as ApiError).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="approval qm-rise" role="region" aria-label="Allow a connector">
+      <div className="approval-head">
+        <Icon name="plug" size={17} />
+        <span style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>{approval.title}</span>
+      </div>
+      <div style={{ padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+        <p className="ui">{approval.summary}</p>
+        <div className="kv">
+          {approval.values.map((v) => (
+            <div key={v.label} className="kv-row">
+              <span className="grow" style={{ fontSize: 14 }}>{v.label}</span>
+              <span className="v" style={{ fontVariantNumeric: "normal" }}>{v.after}</span>
+            </div>
+          ))}
+        </div>
+        <div className="row" style={{ gap: 8 }}>
+          <button className="btn btn-primary grow" disabled={busy} onClick={() => decide(true)}>Allow {name}</button>
+          <button className="btn" disabled={busy} onClick={() => decide(false)}>Don't allow</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EffectCard({ approval, onDone }: { approval: Approval; onDone: () => void }) {
   const { toast } = useShell();
   const [changing, setChanging] = useState(false);
   const [note, setNote] = useState("");

@@ -57,6 +57,10 @@ class ProposedAction:
     element: str | None = None
     # True when the action writes over something that already exists.
     overwrites: bool = False
+    # Effects the tool's own declaration says this action has (a connector's
+    # create_ticket submits; a public reply sends externally). Configuration, so
+    # they gate deterministically, like a require rule.
+    declared_effects: list[str] = field(default_factory=list)
 
     def state(self) -> str:
         parts = [f"Action: {self.description}", f"Tool: {self.tool}"]
@@ -156,6 +160,10 @@ class GateKeeper:
             allow = [r for r in self.rules if r.effect == effect and r.action == "allow" and r.matches(action)]
             if allow:
                 verdicts[effect] = EffectVerdict(False, f"allow:{allow[0].name or 'unnamed'}")
+            elif effect in action.declared_effects:
+                # Declared by the tool: gated unless an explicit allow rule says this
+                # target is fine. An allow rule is the operator's decision to make.
+                verdicts[effect] = EffectVerdict(True, f"declared:{action.tool}")
 
         # 2. The decision model, only for effects no rule enumerated.
         open_effects = [e for e in EFFECTS if e not in verdicts]

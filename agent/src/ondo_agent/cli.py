@@ -115,12 +115,32 @@ def _search(a) -> int:
 
 def _tools_doc(a) -> int:
     from .browser.tools import browser_tools
+    from .connectors.catalog import CATALOG, PLAIN
     from .desktop.tools import desktop_tools
     from .screen.tools import screen_tools
     from .tools.files import file_tools
     from .tools.spec import to_markdown
 
-    print(to_markdown(file_tools() + browser_tools() + desktop_tools() + screen_tools()).rstrip())
+    out = [to_markdown(file_tools() + browser_tools() + desktop_tools() + screen_tools()).rstrip(), ""]
+    out += [
+        "# Connector tools",
+        "",
+        "Offered as `<connector>_<tool>`, with the parameters the connector's MCP server declares. Each "
+        "connector is allowed by the person on first use, and only if the organisation's policy lists it.",
+        "",
+    ]
+    for c in CATALOG.values():
+        out += [
+            f"## {c.name} (`{c.id}`)",
+            "",
+            c.description,
+            "",
+            "| Tool | Effect | What it does |",
+            "| --- | --- | --- |",
+        ]
+        out += [f"| `{c.id}_{t.name}` | {PLAIN[t.effect]} | {t.description} |" for t in c.tools.values()]
+        out.append("")
+    print("\n".join(out).rstrip())
     return 0
 
 

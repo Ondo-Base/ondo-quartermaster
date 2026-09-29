@@ -179,6 +179,16 @@ CREATE TABLE IF NOT EXISTS pilot_requests (
   created_at INTEGER NOT NULL
 );
 
+-- A person's yes to one connector on one agent, until they or an administrator
+-- take it back. Policy (orgs.policy_json allowed_connectors) bounds what can be here.
+CREATE TABLE IF NOT EXISTS consents (
+  agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  connector TEXT NOT NULL,
+  consented_by TEXT NOT NULL,
+  consented_at INTEGER NOT NULL,
+  PRIMARY KEY (agent_id, connector)
+);
+
 CREATE INDEX IF NOT EXISTS runs_user ON runs(user_id, created_at);
 CREATE INDEX IF NOT EXISTS approvals_status ON approvals(status, created_at);
 CREATE INDEX IF NOT EXISTS audit_org ON audit(org_id, id);
@@ -190,6 +200,9 @@ export function openDb(path: string): DB {
   // Columns added after a database was first created.
   const cols = (db.prepare("PRAGMA table_info(agents)").all() as { name: string }[]).map((c) => c.name);
   if (!cols.includes("capabilities_json")) db.exec("ALTER TABLE agents ADD COLUMN capabilities_json TEXT NOT NULL DEFAULT '{}'");
+  const acols = (db.prepare("PRAGMA table_info(approvals)").all() as { name: string }[]).map((c) => c.name);
+  if (!acols.includes("kind")) db.exec("ALTER TABLE approvals ADD COLUMN kind TEXT NOT NULL DEFAULT 'effect'");
+  if (!acols.includes("connector")) db.exec("ALTER TABLE approvals ADD COLUMN connector TEXT");
   return db;
 }
 

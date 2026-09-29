@@ -4,6 +4,7 @@
 agent:
   runs_dir: .ondo/runs
   decision_labels: .ondo/decisions.jsonl
+  consents_file: .ondo/consents.json   # connectors allowed on this device, when no control plane is attached
 
 models:
   profiles_file: config/profiles.yaml
@@ -27,6 +28,25 @@ policy:
   excluded_paths: ["**/HR/**", "**/*payroll*", "**/*password*"]
   excluded_windows: ["Personal mail", "HR portal", "Password manager"]
   writes_require_approval: true
+  # Connectors people may allow. With a control plane, the organisation's policy
+  # replaces this list.
+  allowed_connectors: [ticketing]
+
+# Connectors, reached over MCP. Each one is allowed by the person on its first use
+# (and only if policy lists it); every change it makes stops for approval.
+connectors:
+  ticketing:
+    # The sample service desk (demo/ticketing_server.py). A real one is its MCP server:
+    # command: [...] for a local server, or url: https://... (streamable HTTP) with
+    # token_env naming the environment variable that holds its bearer token.
+    command: ["{python}", -m, ondo_agent.demo.ticketing_server, --store, .ondo/tickets.json]
+  # Any other MCP server: declare each tool's effect, or it is not offered.
+  # billing:
+  #   url: https://mcp.billing.internal/mcp
+  #   token_env: BILLING_MCP_TOKEN
+  #   tools:
+  #     list_invoices: {effect: read}
+  #     approve_invoice: {effect: move_money, title: "Approved an invoice"}
 
 decision:
   provider: rules          # rules | jev (see decision/jev.py before enabling)

@@ -350,3 +350,47 @@ def remote_app_policy(drive: Path, window: str = "Remote billing", *, between=No
         return say(f"The billing session says: {m.group(1).strip()}." if m else "I could not read the status.")
 
     return policy
+
+
+def ticket_reply_policy(drive: Path, customer: str = "Halleck"):
+    """ "Reply to Halleck's renewal ticket with the new annual value from the signed
+    contract, and mark it as waiting on the customer." Finds the ticket, reads it and
+    the contract together, replies publicly with the figure and its source, then
+    sets the status. Acts only on what the tools return."""
+    contract = drive / "Contracts" / "Halleck_MSA_2026.pdf"
+
+    def policy(messages: list[Message], tools) -> ModelResponse:
+        t = _turns(messages)
+        results = _tool_results(messages)
+        last = results[-1][1] if results else ""
+        if t == 0:
+            return call(("ticketing_search_tickets", {"query": f"{customer} renewal", "status": "open"}))
+        if t == 1:
+            m = re.search(r'"id": "(NW-\d+)"', last)
+            if not m:
+                return say(f"I could not find an open renewal ticket for {customer}." + _why(last))
+            return call(("ticketing_get_ticket", {"id": m.group(1)}), ("read_file", {"path": str(contract)}))
+        ticket = re.search(r'"id": "(NW-\d+)"', "\n".join(x for _, x in results if "NW-" in x))
+        c = next(iter(parse_contracts(results).values()), None)
+        if t == 2:
+            if not (ticket and c):
+                return say("I could not read the ticket and the contract together.")
+            body = (
+                f"Hello, the annual value for the new term is {c['new']:,} GBP, as set out in clause "
+                f"{c['clause']} of the signed agreement ({c['file']}). Kind regards, Northwind Operations"
+            )
+            return call(("ticketing_add_comment", {"id": ticket.group(1), "body": body, "public": True}))
+        if t == 3:
+            if "not approved" in last:
+                return say("The reply was not approved, so nothing was sent to the customer.")
+            return call(("ticketing_update_ticket", {"id": ticket.group(1), "status": "pending"}))
+        if "not approved" in last:
+            return say(f"I replied on {ticket.group(1)}, but the status change was not approved.")
+        return say(f"I replied on {ticket.group(1)} with {c['new']:,} GBP and set it to waiting on the customer.")
+
+    return policy
+
+
+def _why(text: str) -> str:
+    m = re.search(r"Permission denied: ([^.]*)", text)
+    return f" ({m.group(1)})" if m else ""

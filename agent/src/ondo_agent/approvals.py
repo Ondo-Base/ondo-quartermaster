@@ -34,6 +34,10 @@ class ApprovalRequest:
     diff: str | None = None
     tool: str = ""
     arguments: dict[str, Any] = field(default_factory=dict)
+    # "effect": a gate stopped an action. "consent": a connector is being used for
+    # the first time and the person decides whether Ondo may use it at all.
+    kind: str = "effect"
+    connector: str | None = None
     id: str = field(default_factory=lambda: "apr_" + uuid.uuid4().hex[:12])
 
     def to_dict(self) -> dict[str, Any]:

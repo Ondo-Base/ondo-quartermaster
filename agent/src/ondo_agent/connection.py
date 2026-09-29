@@ -33,7 +33,7 @@ import websockets
 from .approvals import QueueApprovals
 from .log import EventLog
 from .models.gateway import ModelClient
-from .permissions import Grant, PermissionBroker, Policy
+from .permissions import Consent, Grant, PermissionBroker, Policy
 from .runtime import Config, assemble, make_broker
 
 log = logging.getLogger("ondo.agent")
@@ -81,10 +81,21 @@ class DeviceState:
 
     grants: dict[str, Grant] = field(default_factory=dict)
     policy: Policy = field(default_factory=Policy)
+    # Connectors the person has allowed, as the control plane records them.
+    consents: dict[str, Consent] = field(default_factory=dict)
 
     def broker(self) -> PermissionBroker:
+        p = self.policy
         return PermissionBroker(
-            {k: Grant(g.kind, g.granted, list(g.scope)) for k, g in self.grants.items()}, Policy(**self.policy.__dict__)
+            {k: Grant(g.kind, g.granted, list(g.scope)) for k, g in self.grants.items()},
+            Policy(
+                list(p.excluded_paths),
+                list(p.excluded_windows),
+                list(p.disabled_grants),
+                p.writes_require_approval,
+                list(p.allowed_connectors),
+            ),
+            {k: Consent(c.connector, c.by, c.at) for k, c in self.consents.items()},
         )
 
 
@@ -106,6 +117,12 @@ class ControlPlaneAgent:
             from .browser.session import BrowserSession
 
             self.browser = BrowserSession.from_config(cfg.section("browser"), cfg)
+        # One set of connectors per agent, shared by its runs, like the browser.
+        self.connectors = None
+        if cfg.section("connectors"):
+            from .connectors.service import ConnectorService
+
+            self.connectors = ConnectorService.from_config(cfg.section("connectors"))
         # Screen watching: which shared window is in front (see ``watch.py``).
         self.watcher = None
         self._watch_task: asyncio.Task | None = None
@@ -113,6 +130,11 @@ class ControlPlaneAgent:
         b = make_broker(cfg)
         self.state.grants = b.grants
         self.state.policy = b.policy
+        self.state.consents = dict(b.consents)
+        # Consents the control plane has confirmed, and ones given in a run that it
+        # has not echoed yet. Only a confirmed consent can be revoked by omission.
+        self._confirmed: set[str] = set()
+        self._pending_consents: set[str] = set()
 
     # -- outbound ---------------------------------------------------------------
 
@@ -139,6 +161,8 @@ class ControlPlaneAgent:
             # What the screen and input grants actually unlock on this agent.
             "screen": desktop,
             "input": desktop or browser,
+            # The connectors configured here, and what each can do. Consent is the person's.
+            "connectors": self.connectors.summaries() if self.connectors else [],
             # Pixels: the screen rung (screenshots, pointer and keyboard), where enabled.
             "pixels": desktop and bool(self.cfg.section("screen").get("enabled")),
         }
@@ -160,6 +184,12 @@ class ControlPlaneAgent:
         elif t == "policy":
             policy = msg.get("policy") or {}
             self.state.policy = Policy.from_dict(policy)
+            allowed = self.state.policy.allowed_connectors
+            for broker in self.runs.values():
+                broker.policy.allowed_connectors = list(allowed)
+                for cid in [c for c in broker.consents if c not in allowed]:
+                    broker.revoke_connector(cid, by="admin", reason="not allowed by policy")
+                    broker.stop(f"Your administrator no longer allows {cid}.", by="admin")
             if self.browser is not None and policy.get("allowed_origins"):
                 self.browser.origins.allowed = list(policy["allowed_origins"])
         elif t in ("stop_run", "pause_run", "resume_run"):
@@ -180,6 +210,8 @@ class ControlPlaneAgent:
 
     def _apply_grants(self, msg: dict[str, Any]) -> None:
         by = msg.get("by", "control-plane")
+        if isinstance(msg.get("connectors"), dict):
+            self._apply_consents(msg["connectors"], by, msg.get("reason", "revoked"))
         for kind, g in (msg.get("grants") or {}).items():
             if kind not in ("files", "screen", "input"):
                 continue
@@ -199,9 +231,38 @@ class ControlPlaneAgent:
                     except Exception as e:  # policy refuses: stays revoked
                         log.warning("grant refused by policy: %s", e)
 
+    def _apply_consents(self, given: dict[str, Any], by: str, reason: str) -> None:
+        # A consent given in a run moments ago may not be recorded yet when some
+        # other grant change is pushed: absent-but-pending is not a revocation.
+        self._pending_consents -= set(given)
+        revoked = {c for c in self._confirmed if c not in given}
+        self._confirmed = set(given)
+        kept = {k: c for k, c in self.state.consents.items() if k in self._pending_consents}
+        self.state.consents = {
+            **kept,
+            **{k: Consent(k, str(v.get("by", "")), float(v.get("at", 0)) / 1000) for k, v in given.items()},
+        }
+        for broker in self.runs.values():
+            for cid in [c for c in broker.consents if c in revoked]:
+                broker.revoke_connector(cid, by=by, reason=reason)
+                # The run was planned with this connector: it stops rather than carry on without it.
+                broker.stop(f"Consent for {cid} was {reason}.", by=by)
+            for cid, c in self.state.consents.items():
+                if cid not in broker.consents and broker.connector_allowed(cid):
+                    broker.consents[cid] = Consent(cid, c.by, c.at)
+
     async def _run(self, msg: dict[str, Any]) -> None:
         run_id = msg.get("run_id")
         broker = self.state.broker()
+
+        def consent_changed(kind: str, data: dict[str, Any]) -> None:
+            # A yes given in this run holds for the next one before the control plane echoes it.
+            cid = str(data.get("kind", "")).removeprefix("connector:")
+            if kind == "granted" and str(data.get("kind", "")).startswith("connector:") and cid in broker.consents:
+                self.state.consents[cid] = broker.consents[cid]
+                self._pending_consents.add(cid)
+
+        broker.on_change(consent_changed)
         log_ = EventLog.create(self.cfg.runs_dir, run_id)
         self.runs[log_.run_id] = broker
         log_.subscribe(lambda e: self.send({"type": "event", "event": json.loads(e.to_json())}))
@@ -214,7 +275,7 @@ class ControlPlaneAgent:
             log=log_,
             broker=broker,
             user=msg.get("user", "user"),
-            services={"browser": self.browser} if self.browser is not None else None,
+            services={k: v for k, v in (("browser", self.browser), ("connectors", self.connectors)) if v is not None},
         )
         try:
             a.harness.start(msg["request"])
@@ -303,5 +364,7 @@ class ControlPlaneAgent:
             self._watch_task.cancel()
         if self.browser is not None:
             asyncio.ensure_future(self.browser.aclose())
+        if self.connectors is not None:
+            asyncio.ensure_future(self.connectors.aclose())
         for b in self.runs.values():
             b.stop("agent shutting down", by="agent")

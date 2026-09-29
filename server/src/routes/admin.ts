@@ -18,10 +18,12 @@ export function adminRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
     const org = req.authed!.user.org_id;
     const users = all<{ id: string; email: string; name: string; title: string; role: string; active: number; external_id: string | null }>(db,
       "SELECT id, email, name, title, role, active, external_id FROM users WHERE org_id = ? ORDER BY name", org);
+    const orgPolicy = normalisePolicy(parse(one<{ policy_json: string }>(db, "SELECT policy_json FROM orgs WHERE id = ?", org)!.policy_json, {}));
     const agents = all<{ id: string; user_id: string; hostname: string; os: string; last_seen: number; created_at: number }>(db,
       `SELECT a.id, a.user_id, a.hostname, a.os, a.last_seen, a.created_at FROM agents a JOIN users u ON u.id = a.user_id
        WHERE u.org_id = ? AND a.revoked = 0 ORDER BY a.last_seen DESC`, org)
-      .map((a) => ({ ...a, connected: hub.isConnected(a.id), grants: hub.grantsFor(a.id), user: users.find((u) => u.id === a.user_id) }));
+      .map((a) => ({ ...a, connected: hub.isConnected(a.id), grants: hub.grantsFor(a.id), connectors: hub.connectorsFor(a.id, orgPolicy),
+        user: users.find((u) => u.id === a.user_id) }));
     const devices = all(db, `SELECT d.id, d.user_id, d.name, d.os, d.managed, d.trusted_until, d.last_seen FROM devices d
        JOIN users u ON u.id = d.user_id WHERE u.org_id = ? AND d.trusted_until > ? ORDER BY d.last_seen DESC`, org, now());
     const active = all(db, `SELECT r.id, r.title, r.status, r.agent_id, r.user_id, r.created_at, u.name AS user_name FROM runs r
@@ -36,7 +38,17 @@ export function adminRoutes(app: FastifyInstance, { db, hub }: Ctx): void {
     const policy = normalisePolicy(req.body as never);
     run(db, "UPDATE orgs SET policy_json = ? WHERE id = ?", JSON.stringify(policy), a.user.org_id);
     audit(db, a.user.org_id, `user:${a.user.email}`, "admin.policy_changed", a.user.org_id, policy);
+    // A connector the organisation no longer allows loses every consent given to it:
+    // allowing it again means each person is asked again.
+    const dropped = all<{ agent_id: string; connector: string }>(db,
+      `SELECT c.agent_id, c.connector FROM consents c JOIN agents g ON g.id = c.agent_id JOIN users u ON u.id = g.user_id
+        WHERE u.org_id = ?`, a.user.org_id).filter((c) => !policy.allowed_connectors.includes(c.connector));
+    for (const c of dropped) {
+      run(db, "DELETE FROM consents WHERE agent_id = ? AND connector = ?", c.agent_id, c.connector);
+      audit(db, a.user.org_id, `user:${a.user.email}`, "connector.revoked", c.agent_id, { connector: c.connector, reason: "not allowed by policy" });
+    }
     hub.pushPolicy(a.user.org_id, policy);
+    for (const agentId of new Set(dropped.map((c) => c.agent_id))) hub.pushGrants(agentId, `admin:${a.user.email}`, "no longer allowed by policy");
     return policy;
   });
 
