@@ -10,6 +10,8 @@ __pycache__/
 *.sqlite-journal
 .env
 ondo.yaml
+# The configuration the Windows installer deploys is part of the product.
+!deploy/windows/ondo.yaml
 agent/demo/
 *.sqlite-wal
 *.sqlite-shm
