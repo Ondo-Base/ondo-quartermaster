@@ -476,3 +476,28 @@ def test_tool_screenshots_in_both_wire_formats():
     result = body["messages"][2]["content"][0]
     assert result["type"] == "tool_result"
     assert [b["type"] for b in result["content"]] == ["text", "image"]
+
+
+async def test_platform_check_passes_against_a_real_window(desktop, tmp_path):
+    """``ondo-agent platform-check``, the command the Windows and macOS instructions
+    run first, against the sample app on this desktop: every check passes."""
+    from ondo_agent.platform_check import run_checks
+
+    app = desktop.launch("Legacy billing")
+    try:
+        r = await run_checks("Legacy billing", type_text="203725", out=tmp_path)
+    finally:
+        app.terminate()
+    by = {c.name: c for c in r.checks}
+    assert not r.failed, [(c.name, c.status, c.detail) for c in r.checks]
+    for name in (
+        "desktop backend",
+        "list windows",
+        "find window",
+        "read accessibility tree",
+        "set text by element",
+        "screenshot",
+        "escape-twice listener",
+    ):
+        assert by[name].status == "PASS", (name, by[name].detail)
+    assert (tmp_path / "platform-check.png").exists()

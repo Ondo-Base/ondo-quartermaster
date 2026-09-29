@@ -199,3 +199,60 @@ async def test_a_stop_while_waiting_ends_the_run_and_leaves_the_handle_open(driv
         await a.aclose()
     assert res.status == "stopped"
     assert not a.log.of_type(L.OPERATION_FINISHED)
+
+
+async def test_the_demo_profile_runs_the_stage6_tasks_the_guides_name(drive, tmp_path):
+    """With no model provider, the scripted ``demo`` profile must route each Stage 6
+    request in the README and docs/testing-on-windows-and-mac.md to its script."""
+    from ondo_agent.models.profile import load_profiles
+    from ondo_agent.runtime import make_model
+
+    cfg = config(drive, tmp_path)
+
+    def server(c):
+        return {
+            "command": [
+                "{python}",
+                "-m",
+                "ondo_agent.demo.workplace_servers",
+                "--connector",
+                c,
+                "--store",
+                str(tmp_path / f"{c}.json"),
+            ]
+        }
+
+    cfg.raw["connectors"].update(
+        {
+            "mail": server("mail"),
+            "ticketing": {
+                "command": ["{python}", "-m", "ondo_agent.demo.ticketing_server", "--store", str(tmp_path / "t.json")]
+            },
+        }
+    )
+    cfg.raw["policy"]["allowed_connectors"] += ["mail", "ticketing"]
+    cfg.raw["models"] = {"orchestrator": "demo"}
+    cfg.profiles = load_profiles(Path(__file__).resolve().parents[1] / "config" / "profiles.yaml")
+    cfg.profiles["demo"].extra["drive"] = str(drive)
+    cases = [
+        ("Reconcile receivables for September.", "3 items did not match for 2026-09"),
+        (
+            "Reply to Halleck's renewal ticket with the new annual value from the signed contract, and mark it as waiting on the customer.",
+            "I replied on NW-1042",
+        ),
+        (
+            "Answer Priya's email with the renewal value from the signed contract, and offer her a 30-minute call next week.",
+            "I sent the reply, but the invitation was not approved.",
+        ),
+    ]
+    for request, expected in cases:
+        a = await assemble(
+            cfg,
+            model=make_model(cfg),
+            approvals=AutoApprovals(lambda r: r.kind == "consent" or "mail" in r.tool or "ticketing" in r.tool),
+        )
+        try:
+            res = await a.harness.run(request)
+        finally:
+            await a.aclose()
+        assert res.status == "finished" and res.answer.startswith(expected), (request, res.answer)

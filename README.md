@@ -122,6 +122,7 @@ and click for you", then try:
   reconciliation runs on the ledger's side and the step shows its progress. Kill
   the agent while it runs and start it again: the task carries on and waits for
   the same reconciliation.
+- **Testing on Windows and macOS.** `docs/testing-on-windows-and-mac.md` walks through the automated tests, `ondo-agent platform-check` against a native app, every task above end to end, and deployment. Start there before relying on either platform.
 - **Deploying with Intune.** See `docs/deploy-windows.md`: an enrollment token
   from the admin console, the ADMX policy template, and the Win32 app built by
   `deploy/windows/build.ps1`.

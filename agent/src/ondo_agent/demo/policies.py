@@ -226,7 +226,15 @@ def demo_router(cfg, profile):
                 (m.text for m in messages if m.role == "user" and not m.text.startswith("<environment>")), ""
             )
             r = request.lower()
-            if any(w in r for w in ("billing app", "desktop app", "legacy")):
+            if "reconcile" in r:
+                chosen["p"] = reconciliation_policy()
+            elif "ticket" in r:
+                chosen["p"] = ticket_reply_policy(drive)
+            elif any(w in r for w in ("email", "priya", "calendar")):
+                chosen["p"] = mail_and_calendar_policy(drive)
+            elif "remote" in r:
+                chosen["p"] = remote_app_policy(drive, profile.extra.get("remote_window", "Remote billing"))
+            elif any(w in r for w in ("billing app", "desktop app", "legacy")):
                 chosen["p"] = legacy_app_policy(drive, profile.extra.get("legacy_window", "Legacy billing"))
             elif any(w in r for w in ("portal", "billing system", "key the", "submit")):
                 chosen["p"] = renewal_submit_policy(drive, portal)
@@ -467,5 +475,23 @@ def mail_and_calendar_policy(drive: Path):
         return say(
             f"I replied to Priya with {c['new']:,} GBP and invited her to a call at {ev.group(1) if ev else '?'}."
         )
+
+    return policy
+
+
+def reconciliation_policy(period: str = "2026-09"):
+    """ "Reconcile receivables for September." Starts the reconciliation on the
+    ledger's side, waits for it (the tool does the waiting), and reports what did
+    not match. Survives the agent restarting mid-way: the result arrives either way."""
+
+    def policy(messages: list[Message], tools) -> ModelResponse:
+        results = _tool_results(messages)
+        if not results:
+            return call(("ledger_start_reconciliation", {"period": period}))
+        last = results[-1][1]
+        refs = re.findall(r'"reference": "([^"]+)"', last)
+        if not refs:
+            return say("The reconciliation did not finish." + _why(last))
+        return say(f"{len(refs)} items did not match for {period}: {', '.join(refs)}.")
 
     return policy
