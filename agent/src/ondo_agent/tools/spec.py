@@ -21,6 +21,20 @@ Effect = Literal["read", "write_local", "write_shared", "submit", "send_external
 
 
 @dataclass
+class Image:
+    """A screenshot a tool returns. The bytes go to a blob store beside the run's
+    log, never into the log itself (and never to the control plane): the log
+    records the SHA-256, so the chain still commits to exactly what was seen."""
+
+    data: bytes
+    media_type: str = "image/png"
+    width: int = 0
+    height: int = 0
+    # How the model and the UI refer to it: "s3 · Remote billing".
+    label: str = ""
+
+
+@dataclass
 class ToolResult:
     content: str
     is_error: bool = False
@@ -29,6 +43,9 @@ class ToolResult:
     # Where this content came from, when it is untrusted data (a file path, a URL).
     # Anything with an origin is fenced and screened before the model sees it.
     untrusted_origin: str | None = None
+    # Screenshots. Sent to the model only when its profile supports vision, and
+    # only the most recent few (see ``harness.context``).
+    images: list[Image] = field(default_factory=list)
 
 
 Handler = Callable[[dict[str, Any], "ToolContext"], Awaitable[ToolResult]]

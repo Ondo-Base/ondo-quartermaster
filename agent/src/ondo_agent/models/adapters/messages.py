@@ -62,13 +62,16 @@ def build_request(profile: ModelProfile, messages: list[Message], tools: list[To
         if m.role == "system":
             continue
         if m.role == "tool":
+            # This format takes images inside the tool result, after its text.
+            blocks = _content(m, profile)
+            has_image = any(b["type"] == "image" for b in blocks)
             push(
                 "user",
                 [
                     {
                         "type": "tool_result",
                         "tool_use_id": m.tool_call_id,
-                        "content": m.text,
+                        "content": blocks if has_image else m.text,
                         **({"is_error": True} if m.is_error else {}),
                     }
                 ],

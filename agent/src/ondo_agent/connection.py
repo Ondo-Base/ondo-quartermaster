@@ -136,7 +136,8 @@ class ControlPlaneAgent:
             # What the screen and input grants actually unlock on this agent.
             "screen": desktop,
             "input": desktop or browser,
-            "pixels": False,
+            # Pixels: the screen rung (screenshots, pointer and keyboard), where enabled.
+            "pixels": desktop and bool(self.cfg.section("screen").get("enabled")),
         }
 
     # -- inbound ----------------------------------------------------------------

@@ -137,6 +137,10 @@ def make_tools(cfg: Config) -> list[ToolSpec]:
         from .desktop.tools import desktop_tools
 
         tools += desktop_tools()
+        if cfg.section("screen").get("enabled"):
+            from .screen.tools import screen_tools
+
+            tools += screen_tools()
     return tools
 
 
@@ -213,6 +217,11 @@ async def assemble(
             from .desktop.session import DesktopSession
 
             services["desktop"] = DesktopSession.from_config(d)
+        if cfg.section("screen").get("enabled") and "screen" not in services:
+            from .screen.session import ScreenSession
+
+            services["screen"] = ScreenSession.from_config(cfg.section("screen"), services["desktop"])
+            cleanup.append(services["screen"].aclose)
         if d.get("escape_twice", True):
             cleanup.append(_escape_twice(broker))
     harness = Harness(

@@ -63,9 +63,25 @@ async def inspect(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
     w = await s.window(str(args["window"]), _allowed(ctx))
     els = await s.read(w)
     refs = s.remember(w, els)
-    ctx.log.append(WINDOW_ACCESS, "tool:desktop", {"window": w.label, "op": "read", "elements": len(els)})
+    actionable = sum(1 for e in els if e.actionable)
+    # The screen tools read this: a window with nothing actionable is one where
+    # pixels are the right rung.
+    ctx.log.append(
+        WINDOW_ACCESS, "tool:desktop", {"window": w.label, "op": "read", "elements": len(els), "actionable": actionable}
+    )
+    note = ""
+    if actionable == 0:
+        note = (
+            "\n\nThis window exposes nothing to act on through its accessibility tree (a remote session or a "
+            "canvas). "
+            + (
+                "Use screen_view to see it and screen_act to operate it."
+                if "screen_act" in ctx.run.tools
+                else "Screen control is not enabled on this agent, so it cannot be operated."
+            )
+        )
     return ToolResult(
-        f"Window: {w.label}\n{render(els, refs)}",
+        f"Window: {w.label}\n{render(els, refs)}{note}",
         detail={"summary": f"Read {w.label}", "window": w.label, "elements": len(els)},
         untrusted_origin=f"window:{w.label}",
     )

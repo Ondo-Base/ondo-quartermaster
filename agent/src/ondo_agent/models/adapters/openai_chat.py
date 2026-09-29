@@ -28,12 +28,36 @@ from ..types import (
 _STOP = {"stop": "end", "tool_calls": "tool_use", "length": "max_tokens", "content_filter": "refusal"}
 
 
+def _image_url(p: ImagePart) -> dict[str, Any]:
+    return {"type": "image_url", "image_url": {"url": f"data:{p.media_type};base64,{p.data_b64}"}}
+
+
 def build_request(profile: ModelProfile, messages: list[Message], tools: list[ToolSpec]) -> dict[str, Any]:
     wire: list[dict[str, Any]] = []
+    # This format's tool messages carry text only. Screenshots a tool returned go
+    # in one user message straight after the run of tool results, each labelled
+    # with the call it answers, text first.
+    held: list[dict[str, Any]] = []
+
+    def release() -> None:
+        if held:
+            wire.append(
+                {
+                    "role": "user",
+                    "content": [{"type": "text", "text": "Screenshots from the tool results above:"}, *held],
+                }
+            )
+            held.clear()
+
     for m in messages:
         if m.role == "tool":
             wire.append({"role": "tool", "tool_call_id": m.tool_call_id, "content": m.text})
+            images = [p for p in m.parts if isinstance(p, ImagePart)]
+            if images and profile.supports_vision:
+                held.append({"type": "text", "text": f"From {m.tool_name} ({m.tool_call_id}):"})
+                held.extend(_image_url(p) for p in images)
             continue
+        release()
         if m.role == "assistant":
             item: dict[str, Any] = {"role": "assistant", "content": m.text or None}
             if m.tool_calls:
@@ -55,10 +79,11 @@ def build_request(profile: ModelProfile, messages: list[Message], tools: list[To
                 if isinstance(p, TextPart):
                     content.append({"type": "text", "text": p.text})
             for p in images:
-                content.append({"type": "image_url", "image_url": {"url": f"data:{p.media_type};base64,{p.data_b64}"}})
+                content.append(_image_url(p))
             wire.append({"role": m.role, "content": content})
         else:
             wire.append({"role": m.role, "content": m.text})
+    release()
 
     body: dict[str, Any] = {
         "model": profile.model,

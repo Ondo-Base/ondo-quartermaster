@@ -21,10 +21,14 @@ dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 # --system-site-packages so the agent can import them.
 desktop = [
   "pynput>=1.7",
+  # Screenshots (Stage 5). OCR grounding also wants the tesseract binary:
+  # apt install tesseract-ocr, brew install tesseract, or the Windows installer.
+  "pillow>=10",
   "pywinauto>=0.6.8; sys_platform == 'win32'",
   "psutil>=5.9; sys_platform == 'win32'",
   "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",
   "pyobjc-framework-Cocoa>=10; sys_platform == 'darwin'",
+  "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
 ]
 
 [project.scripts]

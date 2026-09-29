@@ -301,3 +301,52 @@ def legacy_app_policy(drive: Path, window: str = "Legacy billing", *, between=No
         return say(f"The billing app says: {m.group(1)}." if m else "I could not read the app's status.")
 
     return policy
+
+
+def remote_app_policy(drive: Path, window: str = "Remote billing", *, between=None):
+    """ "Update Halleck Logistics' annual value in the remote billing session from the
+    signed contract." Text-only: it never sees a pixel. It walks the ladder (the
+    accessibility tree first), then operates the window by naming targets in words
+    and reads the outcome from the OCR text that comes back with each screenshot.
+    ``between`` runs after typing and before submitting (the tests move the window)."""
+    contract = drive / "Contracts" / "Halleck_MSA_2026.pdf"
+
+    def policy(messages: list[Message], tools) -> ModelResponse:
+        t = _turns(messages)
+        results = _tool_results(messages)
+        last = results[-1][1] if results else ""
+        if t == 0:
+            return call(("read_file", {"path": str(contract)}))
+        c = next(iter(parse_contracts(results).values()), None)
+        if t == 1:
+            if not c:
+                return say("I could not read the new annual value from the contract.")
+            return call(("desktop_inspect", {"window": window}))
+        if t == 2:
+            if "screen_act" not in last:
+                return say("The window has controls I can use directly; this policy only covers remote sessions.")
+            return call(
+                (
+                    "screen_act",
+                    {
+                        "window": window,
+                        "actions": [
+                            {"action": "type", "target": "Annual value field", "text": str(c["new"]), "replace": True}
+                        ],
+                    },
+                )
+            )
+        if t == 3:
+            if "FAILED" in last:
+                return say("Typing the new value failed, so I stopped before submitting.")
+            if between:
+                between()
+            return call(
+                ("screen_act", {"window": window, "actions": [{"action": "click", "target": "the Submit button"}]})
+            )
+        if "not approved" in last:
+            return say("The change was not approved, so nothing was submitted in the billing session.")
+        m = re.search(r"Status: ([^\n<]*)", last)
+        return say(f"The billing session says: {m.group(1).strip()}." if m else "I could not read the status.")
+
+    return policy

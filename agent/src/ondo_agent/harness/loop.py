@@ -17,6 +17,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..blobs import BlobStore
 from ..log import (
     CONTEXT_COLLAPSED,
     CONTEXT_INJECTION,
@@ -38,7 +39,7 @@ from ..models.gateway import ModelClient
 from ..models.types import ContextLengthError, ModelError, ToolCall
 from ..permissions import PermissionBroker, PermissionDenied, RunStopped
 from ..screening import Screener, fence
-from ..tools.spec import ToolContext, ToolResult, ToolSpec
+from ..tools.spec import Image, ToolContext, ToolResult, ToolSpec
 from . import context as ctx
 from .prompts import environment_block, system_prompt
 
@@ -88,7 +89,14 @@ class Harness:
         self.user = user
         # Long-lived things tools may use (the browser session). Not state: the log is.
         self.services = services or {}
-        self.policy = ctx.ContextPolicy(context_window=model.profile.context_window)
+        p = model.profile
+        self.policy = ctx.ContextPolicy(
+            context_window=p.context_window,
+            vision=p.supports_vision,
+            max_images=p.max_images_per_request or 20,
+        )
+        # Screenshots, by hash, beside the log.
+        self.blobs = BlobStore.beside(log.path)
         self._collapsed_logged: set[int] = set()
         self.tool_ctx = ToolContext(
             run=self, broker=broker, log=log, gates=gates, approvals=approvals, screener=screener, config=self.config
@@ -186,7 +194,7 @@ class Harness:
     async def _call_model(self):
         tools = self.tool_list
         for attempt in (0, 1):
-            messages, collapsed = ctx.build(self.log.events, self.policy, aggressive=attempt == 1)
+            messages, collapsed = ctx.build(self.log.events, self.policy, aggressive=attempt == 1, blobs=self.blobs)
             new = [s for s in collapsed if s not in self._collapsed_logged]
             if new:
                 self._collapsed_logged.update(new)
@@ -325,6 +333,7 @@ class Harness:
                     else {"flagged": screen.flagged, "probability": screen.probability},
                 },
                 result.untrusted_origin,
+                result.images,
             )
         self.log.append(
             STEP,
@@ -339,7 +348,31 @@ class Harness:
         )
         return result
 
+    def store_images(self, images: list[Image]) -> list[dict[str, Any]]:
+        """Write screenshots to the blob store; return the references the log keeps."""
+        return [
+            {
+                "sha256": self.blobs.put(im.data),
+                "media_type": im.media_type,
+                "width": im.width,
+                "height": im.height,
+                "label": im.label,
+            }
+            for im in images
+        ]
+
+    def inject(self, text: str, source: str, images: list[Image] | None = None) -> None:
+        """Put something into the model's context that no tool call asked for (what
+        is on screen when the user asks about it). The source says who put it there."""
+        data: dict[str, Any] = {"text": text}
+        if images:
+            data["images"] = self.store_images(images)
+        self.log.append(CONTEXT_INJECTION, source, data)
+
     def _log_result(self, c: ToolCall, r: ToolResult) -> None:
+        detail = dict(r.detail)
+        if r.images:
+            detail["images"] = self.store_images(r.images)
         self.log.append(
             TOOL_RESULT,
             f"tool:{c.name}",
@@ -349,7 +382,7 @@ class Harness:
                 "content": r.content,
                 "is_error": r.is_error,
                 "origin": r.untrusted_origin,
-                "detail": _jsonable(r.detail),
+                "detail": _jsonable(detail),
             },
         )
 
