@@ -66,6 +66,8 @@ connectors:
 
 decision:
   provider: rules          # rules | jev | laya (see decision/jev.py and docs/decision-local.md first)
+  # Cloud (Jev) goes through OpenRouter by default, with OPENROUTER_API_KEY:
+  #   base_url: https://openrouter.ai/api   path: /v1/systemone   model: typesafe/jev-1.13
   # On-prem (Laya), exactly one of:
   #   endpoint: http://10.20.0.5:8000     # a laya-serve inside the network; public hosts are refused
   #   internal_hosts: [.corp.example]      # names that are inside the network, when DNS says otherwise

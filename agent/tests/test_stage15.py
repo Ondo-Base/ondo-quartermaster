@@ -18,7 +18,7 @@ from ondo_agent.approvals import AutoApprovals
 from ondo_agent.decision import calibrate
 from ondo_agent.decision.interface import Answer, Boolean, Choice
 from ondo_agent.decision.jev import JevDecisionModel
-from ondo_agent.decision.logged import LoggedDecisionModel
+from ondo_agent.decision.logged import LoggedDecisionModel, make_decision_model
 from ondo_agent.decision.rules import RulesDecisionModel
 from ondo_agent.demo.policies import renewal_pack_policy
 from ondo_agent.gates import EFFECTS, GateKeeper, GateRule, ProposedAction
@@ -164,6 +164,24 @@ async def test_jev_adapter_maps_typed_questions():
     assert seen["questions"]["c"]["criteria"] == {"A": 'button "Submit"', "B": 'button "Cancel"'}
     assert b.value is True and b.probability == 0.91
     assert c.value == 'button "Submit"' and c.distribution['button "Cancel"'] == 0.2
+
+
+async def test_jev_defaults_to_openrouter(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen.update(url=str(req.url), auth=req.headers.get("authorization"), body=json.loads(req.content))
+        return httpx.Response(200, json={"answers": {"b": {"type": "noul", "noul": 0.2}}})
+
+    jev = make_decision_model({"provider": "jev"})
+    jev._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    (b,) = await jev.ask("state", [Boolean("b", "is it?")])
+    # OpenRouter's System One API, not its chat endpoint, with a pinned Jev version.
+    assert seen["url"] == "https://openrouter.ai/api/v1/systemone"
+    assert seen["auth"] == "Bearer sk-or-test"
+    assert seen["body"]["model"] == "typesafe/jev-1.13"
+    assert b.value is False and b.probability == 0.2
 
 
 async def test_thresholds_come_from_measurement():

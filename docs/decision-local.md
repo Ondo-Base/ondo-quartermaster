@@ -2,7 +2,8 @@
 
 Screening ("does this file contain instructions aimed at an agent?") and element
 selection ("which of these elements is Submit?") are questions for a decision
-model. The cloud tier asks Jev, which is hosted by TypeSafe. An on-prem
+model. The cloud tier asks Jev, which is hosted by TypeSafe and called through
+OpenRouter's System One API. An on-prem
 deployment needs the same answers from a model that runs inside the customer's
 network. That model is [Laya](https://pypi.org/project/laya/) (Apache 2.0),
 behind the same interface (`agent/src/ondo_agent/decision/interface.py`).
@@ -15,7 +16,7 @@ CI.**
 
 | | State |
 | --- | --- |
-| One wire for Jev and Laya (`decision/systemone.py`, `POST /v1/systemone`) | Built. Run against Laya 0.3.22's own server code; **not** checked against TypeSafe's hosted Jev |
+| One wire for Jev and Laya (`decision/systemone.py`, `POST /v1/systemone`) | Built. Run against Laya 0.3.22's own server code; Jev goes to OpenRouter's `https://openrouter.ai/api/v1/systemone` (model `typesafe/jev-1.13`), per its docs, **not yet called** |
 | Laya adapter (`decision/laya.py`): a `laya-serve` inside the network, or local weights in the agent | Built and tested against Laya's own inference code and HTTP server, with a tiny random checkpoint |
 | "No call leaves the network", enforced in code | Built: see below |
 | Labelling logged decisions, and exporting them to fine-tune on | Built (`ondo-agent decisions`) |
@@ -23,7 +24,7 @@ CI.**
 | CI | **Laya adapter** job on every PR; **decision-measure** by hand, for a real checkpoint |
 | ONNX Runtime path (`decision.onnx`) | Written, **not run**: Laya's export script is not in its PyPI package |
 | A fine-tuned checkpoint | **Not done.** It needs labelled decisions from pilots and a GPU |
-| Jev's report on the fixtures (the bar itself) | **Not measured.** It needs a Jev key and a confirmed endpoint |
+| Jev's report on the fixtures (the bar itself) | **Not measured.** It needs an `OPENROUTER_API_KEY` with credit |
 | The bar met | **No.** Neither of the two rows above exists yet |
 
 ## Configuration
@@ -92,9 +93,9 @@ server by IP address.
    so check its input format against `train.jsonl`. It may need a small
    mapping.
 
-4. **Measure Jev once** on the same fixtures, with a key and the endpoint
-   confirmed from TypeSafe's docs:
-   `python -m ondo_agent.decision.calibrate --provider jev --base-url … --path /v1/systemone --out jev.json`.
+4. **Measure Jev once** on the same fixtures, through OpenRouter, with
+   `OPENROUTER_API_KEY` set:
+   `python -m ondo_agent.decision.calibrate --provider jev --out jev.json`.
    Commit `jev.json`: that report is the bar.
 
 5. **Measure the checkpoint against it.** Where the checkpoint is:

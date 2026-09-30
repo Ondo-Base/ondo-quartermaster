@@ -196,10 +196,11 @@ Said plainly, per the plan's own rule about never claiming what is not there:
   was built. Both wire formats are tested against recorded-shape fake endpoints,
   and the end-to-end tests use a scripted model that acts only on tool output. The
   first run against real providers should be the §9 eval set, not a demo.
-- **Jev's endpoint is unverified**, as the plan flags. The adapter takes its URL
-  from configuration. Its wire (`decision/systemone.py`, shared with Laya) is the
-  `/v1/systemone` shape Laya documents as Jev's, run only against Laya's server;
-  confirm it against TypeSafe's official docs before enabling Jev. The committed thresholds
+- **Jev has not been called for real.** It goes through OpenRouter's System One
+  API (`https://openrouter.ai/api/v1/systemone`, model `typesafe/jev-1.13`,
+  `OPENROUTER_API_KEY`), per OpenRouter's documentation. Its wire
+  (`decision/systemone.py`, shared with Laya) has run against Laya's server and a
+  fake endpoint, not against OpenRouter. The committed thresholds
   were measured on the rules baseline, which was tuned on the same 50 fixtures:
   re-measure on a held-out set, and against Jev, before trusting them.
 - **SSO** (OIDC with PKCE, SAML) is implemented but was only exercised through the
@@ -251,7 +252,7 @@ Said plainly, per the plan's own rule about never claiming what is not there:
   connector's long operation is declared as a start tool plus a status tool,
   and the agent keeps the handle in the log. When servers speak Tasks natively,
   that is a new transport for the same `OperationDecl`.
-- **Stage 6.5 is built as far as it can go without labels, a GPU and a Jev key.**
+- **Stage 6.5 is built as far as it can go without labels, a GPU and a Jev measurement.**
   The Laya adapter has run against Laya 0.3.22's own inference code and HTTP
   server, but only with a tiny random checkpoint. Hugging Face was not
   reachable from here, so no real Laya weights have run (the manual

@@ -3,9 +3,10 @@
 Jev (hosted) and Laya (self-hosted, ``laya-serve``) take the same request and
 return the same answers, so one mapping serves both adapters. The shape here is
 the one Laya 0.3.22 implements and documents as schema-identical to Jev's
-(``laya/serve.py``); it has been run against Laya's own server code, not against
-TypeSafe's hosted endpoint, so confirm it against TypeSafe's docs before enabling
-Jev. Everything protocol-specific lives in this module.
+(``laya/serve.py``), and the one OpenRouter's System One API documents for Jev
+(``https://openrouter.ai/api/v1/systemone``). It has been run against Laya's own
+server code, not yet against OpenRouter. Everything protocol-specific lives in
+this module.
 
 Request::
 

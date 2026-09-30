@@ -368,9 +368,11 @@ hand-labelled actions from the Stage 1 fixtures:
 Ship nothing on the strength of the vendor's accuracy figure. The signup credit
 covers the whole experiment.
 
-**Open question to confirm before writing code:** published sources disagree on
-the endpoint (`api.typesafe.ai/v1/systemone` vs a `jevtypesafe.org` docs mirror
-that is not TypeSafe's own domain). Verify against the official docs.
+**Endpoint:** Jev is called through OpenRouter's System One API,
+`POST https://openrouter.ai/api/v1/systemone` with model `typesafe/jev-1.13`,
+on the same OpenRouter key as the orchestrator. That settles the earlier doubt
+between `api.typesafe.ai` and a `jevtypesafe.org` mirror TypeSafe does not own.
+OpenRouter is then a second third party in the data flow on the cloud tier.
 
 ---
 

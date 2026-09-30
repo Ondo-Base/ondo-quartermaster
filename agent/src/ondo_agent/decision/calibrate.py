@@ -178,7 +178,7 @@ def main(argv: list[str] | None = None) -> None:
     ap = argparse.ArgumentParser(description="Measure a decision model on labelled fixtures and write gate thresholds.")
     ap.add_argument("--fixtures", default=str(Path(__file__).resolve().parents[3] / "fixtures" / "decision"))
     ap.add_argument("--provider", default="rules")
-    ap.add_argument("--base-url", default="")
+    ap.add_argument("--base-url", default="", help="jev: defaults to OpenRouter")
     ap.add_argument("--path", default="")
     ap.add_argument("--endpoint", default="", help="laya: a self-hosted laya-serve inside the network")
     ap.add_argument("--checkpoint", default="", help="laya: a local checkpoint directory, run in this process")

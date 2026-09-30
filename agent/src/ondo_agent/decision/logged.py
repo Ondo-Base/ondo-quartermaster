@@ -75,13 +75,13 @@ def make_decision_model(cfg: dict[str, Any] | None) -> DecisionModel:
 
         return RulesDecisionModel()
     if provider == "jev":
-        from .jev import JevDecisionModel
+        from .jev import DEFAULT_MODEL, OPENROUTER_BASE_URL, SYSTEMONE_PATH, JevDecisionModel
 
         return JevDecisionModel(
-            base_url=cfg.get("base_url", ""),
-            path=cfg.get("path", ""),
-            model=cfg.get("model", "jev"),
-            api_key_env=cfg.get("api_key_env", "JEV_API_KEY"),
+            base_url=cfg.get("base_url") or OPENROUTER_BASE_URL,
+            path=cfg.get("path") or SYSTEMONE_PATH,
+            model=cfg.get("model") or DEFAULT_MODEL,
+            api_key_env=cfg.get("api_key_env") or "OPENROUTER_API_KEY",
             timeout_s=float(cfg.get("timeout_s", 5.0)),
         )
     if provider == "laya":
