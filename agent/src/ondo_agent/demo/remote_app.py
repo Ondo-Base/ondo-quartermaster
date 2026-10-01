@@ -1,4 +1,4 @@
-"""A stand-in for a Citrix or remote-desktop window, for the Stage 5 tests and demo.
+"""A stand-in for a Citrix or remote-desktop window, for the screen tests and demo.
 
 The whole form is pixels on one canvas: no buttons, fields or labels exist as
 widgets, so the accessibility tree shows one unnamed drawing and nothing to act

@@ -4,7 +4,7 @@ Jev is closed and hosted only, so on paths that carry customer file contents or
 screen text it is a third party in the data flow, and through OpenRouter so is
 OpenRouter. It is the cloud-tier implementation; the on-prem tier needs a
 self-hosted model behind the same interface before screening can be sold
-locally (implementation plan §5, Stage 6.5).
+locally (docs/design.md §5, docs/decision-local.md).
 
 The defaults are OpenRouter's System One API, per OpenRouter's documentation
 (openrouter.ai/docs/api/api-reference/systemone/submit-a-system-one-request):

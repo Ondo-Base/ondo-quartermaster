@@ -1,4 +1,4 @@
-"""A small ticketing system, served over MCP, for the Stage 6 tests and demo.
+"""A small ticketing system, served over MCP, for the connector tests and demo.
 
 It stands in for the service desk an operations team already has: tickets with
 a customer, a status and a thread of comments. It speaks MCP over stdio, so the

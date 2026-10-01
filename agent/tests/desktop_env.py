@@ -1,4 +1,4 @@
-"""A real, throwaway desktop for the Stage 4 tests: Xvfb, a D-Bus session and the
+"""A real, throwaway desktop for the desktop and screen tests: Xvfb, a D-Bus session and the
 AT-SPI registry, with GTK apps launched into it. Linux only."""
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from pathlib import Path
 
 
 def screen_available() -> bool:
-    """The Stage 5 extras on top of the desktop: OCR and cairo for the canvas app."""
+    """The screen tests' extras on top of the desktop: OCR and cairo for the canvas app."""
     if not available() or not shutil.which("tesseract"):
         return False
     try:

@@ -1,4 +1,4 @@
-"""Stage 6: long-running tasks.
+"""Long-running tasks, and runs that survive the agent restarting.
 
 A long operation on a connector's side (a reconciliation) is started once and
 waited for by its handle, with progress shown as it goes. A run survives the
@@ -201,8 +201,8 @@ async def test_a_stop_while_waiting_ends_the_run_and_leaves_the_handle_open(driv
     assert not a.log.of_type(L.OPERATION_FINISHED)
 
 
-async def test_the_demo_profile_runs_the_stage6_tasks_the_guides_name(drive, tmp_path):
-    """With no model provider, the scripted ``demo`` profile must route each Stage 6
+async def test_the_demo_profile_runs_the_connector_tasks_the_guides_name(drive, tmp_path):
+    """With no model provider, the scripted ``demo`` profile must route each connector
     request in the README and docs/testing-on-windows-and-mac.md to its script."""
     from ondo_agent.models.profile import load_profiles
     from ondo_agent.runtime import make_model

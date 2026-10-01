@@ -1,9 +1,10 @@
-# Ondo Quartermaster — implementation plan
+# Ondo Quartermaster — design
 
-Written 25 September 2026. Plain-language plan for building the product in
-`design/`: an on-computer assistant for enterprise operations teams that reads
-files, watches the screen, controls the keyboard and pointer, and acts through
-connected apps.
+Why the product in `design/` is built the way it is: an on-computer assistant
+for enterprise operations teams that reads files, watches the screen, controls
+the keyboard and pointer, and acts through connected apps. Written 25 September
+2026, before it was built, and kept for its reasoning. What is built, and how
+far each part is verified, is in the [README](../README.md#what-is-built-and-how-far-it-is-verified).
 
 **This plan is model-agnostic.** No provider's SDK, tool schema or proprietary
 feature appears in the core of the system. The model is a replaceable part
@@ -357,7 +358,7 @@ answer has no human or deterministic backstop.
 ### The spike to run first
 
 Before any of this lands in the loop, one afternoon's measurement on ~50
-hand-labelled actions from the Stage 1 fixtures:
+hand-labelled actions from the file-task fixtures:
 
 - the four `boolean` gate questions → precision and recall against the labels,
   and where the threshold must sit for **zero false negatives on "moves money"**
@@ -539,88 +540,15 @@ respect — which also means it holds identically whatever model is loaded.
 
 ---
 
-## 9. The stages
+## 9. The eval set
 
-Each stage ends with something demonstrable. No stage depends on the next one
-working.
-
-### Stage 0 — Skeleton, the log, and the model layer
-The hand-rolled loop, the append-only event log, the trajectory view, one tool
-(`read_file`), the gateway plus adapter with **two providers wired from day one**,
-and the web UI shell reading the real event stream. No automation yet.
-**Done when:** you can ask a question about a local spreadsheet, replay the run
-from the log, and re-run it against the second provider by changing config.
-
-Two providers on day one is the whole trick. Agnosticism added later is never
-real; the vendor assumptions are already in the loop by then.
-
-### Stage 1 — Files, properly
-`openpyxl` / `python-docx` / `python-pptx` / `pypdf`. Granted-folder enforcement.
-The files table from the design with real read/edited/excluded status. Diff
-preview on every write.
-**Done when:** "build the renewal pack from these twelve contracts" works end to
-end with no GUI automation anywhere, and every write shows a diff first.
-
-### Stage 1.5 — The decision layer
-Run the §5 spike on Stage 1's fixtures. Then the `decision_model` interface with a
-Jev adapter, untrusted-content screening on every file read, and gate
-classification as a second net behind deterministic rules. Log every decision with
-its probability.
-**Done when:** the gate thresholds come from measured precision and recall rather
-than judgment, screening runs on every read, and the logged decisions are already
-accumulating the labels Laya will need.
-
-### Stage 2 — Login, policy, audit
-SSO (SAML/OIDC), SCIM, device trust, the three-grant pairing flow, the admin
-console, the audit log, SIEM export. The whole login flow in `design/`.
-**Done when:** an admin can revoke a grant mid-run from the console and the run
-stops.
-
-### Stage 3 — The browser
-Playwright MCP, accessibility-tree first, persistent profiles, origin
-allowlisting, approval gates on submit.
-**Done when:** a task spanning the document store and a web portal completes with
-no screenshots in the transcript — and passes with a text-only model, proving the
-rung.
-
-### Stage 4 — Semantic desktop control
-`pywinauto` on Windows, `AXUIElement` on macOS, a window/element inventory tool
-the model can query, input control behind the third grant.
-Element selection moves to the decision layer (§5) here.
-**Done when:** a legacy internal app is driven by element name, not coordinates,
-survives the window being moved and the display rescaled, and picks its target
-without an orchestrator turn.
-
-### Stage 5 — Pixels, as the floor
-Your own computer tool schema, `zoom`, correct scaling both ways, the rolling
-screenshot buffer, batch-and-verify. Grounding routed to a dedicated model, with
-a self-hosted option. Screen watching as a first-class mode: the context chip,
-"ask about this screen", the prompting overlay.
-**Done when:** a Citrix or remote-desktop window can be operated; the harness
-picks pixels only after trying the ladder above; and grounding can be switched to
-a locally hosted model without touching the executor.
-
-### Stage 6 — Connectors and scale
-First-party MCP connectors (mail, calendar, document store, ticketing). Register
-with the Windows ODR and consume File Explorer and Settings. Saved workflows. The
-Tasks extension for long runs.
-**Done when:** IT can deploy through Intune and control MCP access from Settings
-without talking to you.
-
-### Stage 6.5 — The local decision model
-Fine-tune Laya on the decisions logged since Stage 1.5 and put it behind the same
-interface. This is the gate on selling an on-prem deployment.
-**Done when:** screening and element selection meet the Jev-measured bar with no
-call leaving the customer's network, and both adapters stay green in CI.
-
-### Running alongside, from Stage 1: the eval set
-Not a phase — a habit, and the thing that makes everything above real. Every task
+A habit, and the thing that makes everything above real. Every task
 a pilot customer runs becomes a fixture: starting state, request, expected end
 state. Grade on *task completed correctly*, not *model said something reasonable*.
 
 For an agnostic product it does double duty. It tells you whether a prompt change
 helped, **and it is the only honest way to answer "which model should we run".**
-Run the suite across providers, per stage, and keep the scores. That table — cost,
+Run the suite across providers, after every change that matters, and keep the scores. That table — cost,
 latency and success rate per model, on your customers' actual work — is a genuine
 competitive asset, and it is the artefact that makes swapping a decision rather
 than a gamble.
@@ -658,22 +586,7 @@ than a gamble.
 - **Latency is the product's reputation.** Every pixel step is a round trip.
   Climbing the ladder is a speed feature as much as a reliability one.
 - **Enterprise procurement asks about the audit log before the AI.** The log-first
-  harness is the answer, which is why it is Stage 0.
-
----
-
-## 11. What to do first
-
-1. Pick the language split. (Recommendation above: Python agent, TypeScript UI.)
-2. Read the harness engineering paper's subsystem breakdown, then skim DeepSeek
-   Harness's event log and one or two published system prompts. A day, and it will
-   save weeks.
-3. Write the event log and the loop. Nothing else.
-4. Add the model layer: internal tool schema, capability profile, gateway, two
-   providers.
-5. Add one tool — `read_file` — and make the trajectory view show where every
-   token in context came from.
-6. Run step 5 against both providers before adding a second tool.
+  harness is the answer, which is why it comes first.
 
 ---
 

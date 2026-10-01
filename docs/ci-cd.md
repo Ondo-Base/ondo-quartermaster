@@ -7,7 +7,7 @@ What runs, when, and what it protects. Everything here lives in `.github/`.
 | Workflow | Job (status check name) | Fails when |
 | --- | --- | --- |
 | `ci` | **Lint and typecheck** | `ruff check` or `ruff format --check` fails on the agent; `actionlint` finds a broken workflow; TypeScript does not typecheck |
-| `ci` | **Agent tests** | Any agent test fails: both model wire formats, files, decision layer, real Chromium (Stage 3), real GTK app on a virtual display (Stage 4), the control-plane integration. Also fails if `agent/config/thresholds.json` no longer matches what calibration measures |
+| `ci` | **Agent tests** | Any agent test fails: both model wire formats, files, decision layer, real Chromium (the browser), a real GTK app on a virtual display (desktop and screen), the control-plane integration. Also fails if `agent/config/thresholds.json` no longer matches what calibration measures |
 | `ci` | **Laya adapter** | The self-hosted decision-model adapter no longer works with Laya's own inference code and HTTP server (a tiny random checkpoint, CPU torch; nothing downloaded from Hugging Face) |
 | `ci` | **Control plane and web tests** | Server or web tests fail, or either does not build |
 | `ci` | **Container image builds** | The Dockerfile does not build, or the image does not come up healthy and non-root |

@@ -48,7 +48,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Desktop stack for the Stage 4 and 5 tests
+      - name: Desktop stack for the desktop and screen tests
         run: |
           sudo apt-get update
           sudo apt-get install -y xvfb dbus at-spi2-core python3-pyatspi gir1.2-atspi-2.0 gir1.2-gtk-3.0 xdotool \
@@ -89,7 +89,7 @@ jobs:
       # Against Laya's own inference code and HTTP server, with a tiny random
       # checkpoint written to disk: no weights are downloaded. A missing Laya
       # fails the job instead of skipping.
-      - run: .venv/bin/pytest -q agent/tests/test_stage65.py
+      - run: .venv/bin/pytest -q agent/tests/test_local_decision_model.py
         env:
           ONDO_REQUIRE_LAYA: "1"
 

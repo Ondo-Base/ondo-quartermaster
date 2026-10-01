@@ -1,6 +1,6 @@
-"""Stage 1: files, properly.
+"""Files: Office documents, PDFs and text, read and written properly.
 
-Done when: "build the renewal pack from these twelve contracts" works end to end
+Shown here: "build the renewal pack from these twelve contracts" works end to end
 with no GUI automation anywhere, and every write shows a diff first.
 """
 

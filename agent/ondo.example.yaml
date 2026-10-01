@@ -97,7 +97,7 @@ browser:
   no_sandbox: false
 
 desktop:
-  enabled: false            # semantic desktop control (Stage 4): needs the screen and input grants
+  enabled: false            # desktop control through the accessibility tree: needs the screen and input grants
   backend: auto             # atspi (Linux) | uia (Windows) | ax (macOS)
   escape_twice: true        # if the key listener cannot start, input control is switched off
   element_pick_threshold: 0.35
@@ -105,7 +105,7 @@ desktop:
     "Legacy billing": {"push button#1": "Refresh"}
 
 screen:
-  enabled: false            # pixels (Stage 5): screenshots, pointer and keyboard; needs desktop.enabled
+  enabled: false            # pixels, the last resort: screenshots, pointer and keyboard; needs desktop.enabled
   backend: auto             # x11 (Linux) | win32 (Windows) | quartz (macOS)
   max_long_edge: 1280       # screenshots are sent no larger; the model profile can lower it
   watch: true               # report which shared window is in front, for "Ask about this screen"

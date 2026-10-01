@@ -1,6 +1,6 @@
-"""Stage 6.5: the local decision model.
+"""The local decision model (Laya).
 
-Done when (plan): screening and element selection meet the Jev-measured bar with
+The goal: screening and element selection meet the Jev-measured bar with
 no call leaving the customer's network, and both adapters stay green in CI.
 
 Shown here: Jev and Laya speak one wire (``/v1/systemone``); the Laya adapter

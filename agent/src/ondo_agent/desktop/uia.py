@@ -2,7 +2,7 @@
 
 UNTESTED: written against pywinauto's documented UIA API but never run, because
 this repository's CI and development environment are Linux. Run
-``tests/test_stage4.py`` on a Windows machine (with the GTK test app replaced by
+``tests/test_desktop.py`` on a Windows machine (with the GTK test app replaced by
 a WinForms or Win32 equivalent) before relying on it.
 """
 

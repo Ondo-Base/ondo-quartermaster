@@ -1,4 +1,4 @@
-"""Sample mail, calendar and team-site servers, over MCP, for Stage 6.
+"""Sample mail, calendar and team-site servers, over MCP, for the connector tests and demo.
 
 They stand in for Exchange or Gmail, a calendar, and SharePoint or a similar
 document store, the way ``ticketing_server.py`` stands in for a service desk.

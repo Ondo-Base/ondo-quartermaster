@@ -1,7 +1,7 @@
 """Context management: rebuild the model's context from the log, every turn.
 
 The log is the source of truth, so the context is a pure function of it plus a
-collapse policy. Layers, in the order the plan asks for them:
+collapse policy. Layers, in the order docs/design.md asks for them:
 
 - **Collapse** — verbose tool output from older turns (spreadsheet dumps, page
   snapshots) is replaced by a one-line stub that says what it was and how to get

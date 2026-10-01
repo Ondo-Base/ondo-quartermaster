@@ -1,7 +1,7 @@
 """A small billing portal: the "system of record with no API" from the design.
 
 Plain server-rendered HTML with real labels, so its accessibility tree is what a
-well-behaved internal web app looks like. Used by the Stage 3 end-to-end test and
+well-behaved internal web app looks like. Used by the browser end-to-end test and
 the local demo. In-memory; nothing persists.
 """
 

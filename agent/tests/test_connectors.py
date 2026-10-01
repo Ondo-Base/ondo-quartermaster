@@ -1,4 +1,4 @@
-"""Stage 6, first part: connectors, consented to one at a time.
+"""Connectors, consented to one at a time, with ticketing as the example.
 
 The connector is a real MCP server over stdio (``demo/ticketing_server.py``), the
 same way a first-party connector is reached in production. What is shown here:
