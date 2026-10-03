@@ -1,6 +1,6 @@
-"""Stage 0: the loop, the log, the model layer with two providers from day one.
+"""The loop, the event log, and the model layer with two wire formats.
 
-Done when: you can ask a question about a local spreadsheet, replay the run from
+Shown here: a question about a local spreadsheet is answered; the run replays from
 the log, and re-run it against the second provider by changing config.
 """
 

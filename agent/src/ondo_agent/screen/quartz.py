@@ -1,5 +1,5 @@
 """macOS screen backend. UNTESTED: written to the same interface as the X11
-backend, never executed. Run ``tests/test_stage5.py`` on macOS before relying on
+backend, never executed. Run ``tests/test_screen.py`` on macOS before relying on
 it.
 
 Window bounds and pointer events are in points; a Retina screenshot is in

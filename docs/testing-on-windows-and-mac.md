@@ -95,8 +95,8 @@ From the `agent` folder:
 .venv/bin/python -m pytest -q            # macOS
 ```
 
-**Expect:** everything passes except the Stage 4 and 5 desktop tests
-(`test_stage4.py`, `test_stage5.py`), which **skip**. They need a Linux virtual
+**Expect:** everything passes except the desktop and screen tests
+(`test_desktop.py`, `test_screen.py`), which **skip**. They need a Linux virtual
 desktop; part 3 covers the same ground on this machine. The integration tests
 start their own control plane with `npx tsx`, so `npm install` must have worked.
 

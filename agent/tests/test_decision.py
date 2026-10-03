@@ -1,6 +1,6 @@
-"""Stage 1.5: the decision layer.
+"""The decision layer: gates and screening.
 
-Done when: gate thresholds come from measured precision and recall rather than
+Shown here: gate thresholds come from measured precision and recall rather than
 judgment, screening runs on every read, and the logged decisions are already
 accumulating the labels a self-hosted model will need.
 """

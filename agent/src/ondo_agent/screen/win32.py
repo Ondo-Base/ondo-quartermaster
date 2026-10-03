@@ -1,5 +1,5 @@
 """Windows screen backend. UNTESTED: written to the same interface as the X11
-backend, never executed. Run ``tests/test_stage5.py`` on Windows, against a
+backend, never executed. Run ``tests/test_screen.py`` on Windows, against a
 native test app, before relying on it.
 
 The process is made per-monitor DPI aware, so window rectangles, screenshots

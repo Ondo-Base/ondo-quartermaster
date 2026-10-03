@@ -1,6 +1,6 @@
 """Self-hosted decision-model adapter (Laya, Convai Innovations, Apache 2.0).
 
-The on-prem tier (implementation plan Stage 6.5): the same typed questions as
+The on-prem tier (docs/decision-local.md): the same typed questions as
 Jev, answered by a model that runs inside the customer's network. Two ways to
 run it, and neither can reach the internet:
 

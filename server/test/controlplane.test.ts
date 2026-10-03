@@ -1,6 +1,6 @@
-// Stage 2: login, policy, audit.
-// Done when: an admin can revoke a grant mid-run from the console and the run
-// stops. The agent side of "stops" is covered by agent/tests/test_integration.py;
+// The control plane: sign-in, devices, pairing, grants, policy, audit, screen
+// watching, connector consent and saved workflows. First: an admin revokes a
+// grant mid-run from the console and the run stops. The agent side of "stops" is covered by agent/tests/test_integration.py;
 // here the control plane's half: the revocation reaches the agent immediately.
 
 import { createHmac } from "node:crypto";
@@ -259,7 +259,7 @@ describe("audit export and SIEM", () => {
   });
 });
 
-describe("screen watching (Stage 5)", () => {
+describe("screen watching", () => {
   it("knows which shared window is in front, starts runs about it, and pauses on Escape", async () => {
     const mara = await signedIn("mara.okonjo@northwind-ops.com");
     const agent = await FakeAgent.pair(mara);
@@ -299,7 +299,7 @@ describe("screen watching (Stage 5)", () => {
   });
 });
 
-describe("connector consent (Stage 6)", () => {
+describe("connector consent", () => {
   it("records a person's yes to a connector, bounded by policy, and takes it back", async () => {
     const mara = await signedIn("mara.okonjo@northwind-ops.com");
     const agent = await FakeAgent.pair(mara);
@@ -358,7 +358,7 @@ describe("connector consent (Stage 6)", () => {
   });
 });
 
-describe("saved workflows (Stage 6)", () => {
+describe("saved workflows", () => {
   it("saves a request from a run, runs it again under its name, and keeps it private", async () => {
     const mara = await signedIn("mara.okonjo@northwind-ops.com");
     const agent = await FakeAgent.pair(mara);

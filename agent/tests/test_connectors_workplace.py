@@ -1,4 +1,4 @@
-"""Stage 6: the mail, calendar and team-site connectors.
+"""The mail, calendar and team-site connectors.
 
 Each is a real MCP server over stdio (``demo/workplace_servers.py``). The rules
 they follow are the ticketing connector's: consent once per connector, reads and

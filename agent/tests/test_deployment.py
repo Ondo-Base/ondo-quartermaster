@@ -1,4 +1,4 @@
-"""Stage 6: settings from the organisation's device management.
+"""Deployment: settings from the organisation's device management.
 
 What Intune or Group Policy writes under HKLM\\SOFTWARE\\Policies\\Ondo\\Quartermaster
 (or a macOS configuration profile) is read here through an injected reader, so

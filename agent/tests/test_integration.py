@@ -1,6 +1,6 @@
-"""Stage 2 end to end: the real control plane and the real agent.
+"""End to end: the real control plane and the real agent.
 
-Done when: an admin can revoke a grant mid-run from the console and the run stops.
+Shown here first: an admin revokes a grant mid-run from the console and the run stops.
 
 Starts the TypeScript control plane, signs in through device verification, pairs
 this agent with a one-time code, grants files, starts a run from the web API,
@@ -172,7 +172,7 @@ async def _status(c: httpx.AsyncClient, run_id: str, status: str):
 
 
 async def test_desktop_run_through_the_control_plane(server, desktop, drive, tmp_path):
-    """Stage 4 through the whole stack: capabilities reported, windows granted by
+    """Desktop control through the whole stack: capabilities reported, windows granted by
     name, the submit approved from the web, window actions in the audit log."""
     from ondo_agent.demo.policies import legacy_app_policy
 
@@ -231,7 +231,7 @@ async def _screen(c: httpx.AsyncClient, agent_id: str, pred):
 
 
 async def test_ask_about_this_screen_through_the_control_plane(server, desktop, drive, tmp_path):
-    """Stage 5's screen watching through the whole stack: the agent says which
+    """Screen watching through the whole stack: the agent says which
     shared window is in front, a run started "about this screen" gets what that
     window shows before its first turn, and Escape twice stops the watching."""
     from desktop_env import screen_available
@@ -300,7 +300,7 @@ async def test_ask_about_this_screen_through_the_control_plane(server, desktop, 
 
 
 async def test_connector_consent_and_revocation_through_the_control_plane(server, drive, tmp_path):
-    """Stage 6's consent through the whole stack: the first use of the ticketing
+    """Connector consent through the whole stack: the first use of the ticketing
     connector is allowed from the web, recorded by the control plane and not asked
     again; revoking it from the web stops a run that is using it."""
     import sys
@@ -394,7 +394,7 @@ async def _crash(agent: ControlPlaneAgent, conn: asyncio.Task) -> None:
 
 
 async def test_a_run_survives_the_agent_restarting(server, drive, tmp_path):
-    """Stage 6's long-running tasks through the whole stack. The agent is killed
+    """Long-running tasks through the whole stack. The agent is killed
     while a reconciliation runs on the ledger's side and while another run waits
     for approval. A new agent process, with the same credentials and run folder,
     reconnects: the control plane has it resume both from their logs. The first

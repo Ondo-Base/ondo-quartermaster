@@ -6,7 +6,7 @@ the customer's network so screenshots never leave the building. Swapping it is
 configuration; the executor that clicks never changes.
 
 - ``VisionGrounder`` — any OpenAI-compatible vision endpoint. Point it at a
-  self-hosted vLLM serving UI-TARS or OS-Atlas (the plan's recommendation), or at
+  self-hosted vLLM serving UI-TARS or OS-Atlas (docs/design.md's recommendation), or at
   a hosted model. Understands the coordinate formats those models emit.
 - ``OcrGrounder`` — tesseract, on the CPU. Finds labelled targets: buttons by
   their text, fields by the label beside them. The baseline that runs anywhere,

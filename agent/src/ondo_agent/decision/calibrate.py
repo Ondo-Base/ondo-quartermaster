@@ -152,7 +152,7 @@ async def run(model: DecisionModel, fixtures: Path, *, target_recall: float = 0.
     return report
 
 
-# Stage 6.5's bar: what a local model must match on the same fixtures before
+# The local model's bar: what a local model must match on the same fixtures before
 # screening and element selection can run without a hosted model.
 BAR = {
     "screening recall": lambda r: r["screening"]["at_0.5"]["recall"],

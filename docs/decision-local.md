@@ -1,4 +1,4 @@
-# The local decision model (Stage 6.5)
+# The local decision model
 
 Screening ("does this file contain instructions aimed at an agent?") and element
 selection ("which of these elements is Submit?") are questions for a decision
@@ -8,7 +8,7 @@ deployment needs the same answers from a model that runs inside the customer's
 network. That model is [Laya](https://pypi.org/project/laya/) (Apache 2.0),
 behind the same interface (`agent/src/ondo_agent/decision/interface.py`).
 
-The plan's bar: **screening and element selection meet the Jev-measured bar,
+The bar (docs/design.md §5): **screening and element selection meet the Jev-measured bar,
 with no call leaving the customer's network, and both adapters stay green in
 CI.**
 

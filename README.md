@@ -4,17 +4,17 @@ An on-computer assistant for enterprise operations teams: it reads the files a
 team already works in, operates web portals through their accessibility tree, and
 stops for a person before anything is submitted, sent, overwritten or paid.
 
-This repository implements **Stages 0 to 6** of
-[`docs/implementation-plan.md`](docs/implementation-plan.md) against the screens in
-[`design/`](design/README.md).
+It is built from the design in [`docs/design.md`](docs/design.md)
+and the screens in [`design/`](design/README.md). What is built, and how far
+each part is verified, is [below](#what-is-built-and-how-far-it-is-verified).
 
 ```
 agent/    Python desktop agent: harness, model layer, decision layer, tools (files, browser, desktop, screen, connectors), permission broker
 server/   TypeScript control plane: identity, device trust, pairing, grants, runs, audit, SIEM, SCIM
 web/      React web UI: landing, login flow, workspace, task run, files, admin console
 design/   The design canvas export (source of record for layout, colour and copy)
-docs/     The implementation plan, and tool docs generated from the schema
-deploy/   A sample LiteLLM gateway config
+docs/     The design rationale, guides for deployment and testing, and tool docs generated from the schema
+deploy/   A sample LiteLLM gateway config, and Windows packaging (ADMX policy, Intune scripts, build)
 ```
 
 ## How the pieces fit
@@ -152,7 +152,7 @@ works without the control plane:
 ## Tests
 
 ```sh
-cd agent && .venv/bin/pytest -q      # stages 0 to 6.5, and the control-plane integration
+cd agent && .venv/bin/pytest -q      # every capability, and the control-plane integration
 npm test                             # control plane (vitest) and web
 npm run typecheck
 ```
@@ -174,96 +174,307 @@ agent to a GitHub release, both with signed provenance. Pre-commit hooks run the
 same checks locally. See [`docs/ci-cd.md`](docs/ci-cd.md), including the branch
 rules an admin needs to switch on to enforce them.
 
-## Stages and their "done when"
+## What is built, and how far it is verified
 
-| Stage | Done when (from the plan) | Where it is shown |
-| --- | --- | --- |
-| 0 · Skeleton, log, model layer | Ask about a local spreadsheet, replay the run from the log, re-run it on the second provider by changing config | `agent/tests/test_stage0.py` — same run through both wire formats, replay from the log, fork onto another model |
-| 1 · Files, properly | "Build the renewal pack from these twelve contracts" end to end with no GUI automation, every write showing a diff first | `test_stage1.py` — 12 contracts + workbook read in one turn, diff → approval → write ordering asserted, refusals change nothing, exclusions and symlink escapes blocked |
-| 1.5 · Decision layer | Thresholds from measured precision and recall, screening on every read, decisions accumulating as labels | `test_stage15.py`; `python -m ondo_agent.decision.calibrate` over 50 hand-labelled actions writes `agent/config/thresholds.json` |
-| 2 · Login, policy, audit | An admin revokes a grant mid-run from the console and the run stops | `agent/tests/test_integration.py` (real server + real agent); `server/test/stage2.test.ts` |
-| 3 · The browser | A task spanning the document store and a web portal completes with no screenshots, passing with a text-only model | `test_stage3.py` — contracts from the granted folder keyed into the portal through the accessibility tree, one approval with exact before/after values, no images anywhere, origins enforced before and after navigation |
-| 4 · Semantic desktop control | A legacy app driven by element name, not coordinates, surviving a moved window and a rescaled display, picking its target without an orchestrator turn | `test_stage4.py` — a GTK billing app on a virtual display, run at 1× and 2× scale and moved and resized mid-task; the model names targets in words and the decision layer picks them; the submit is gated with the exact value; Escape twice (real keypresses) takes the keyboard back and stops the run. `test_integration.py` runs the same task through the control plane |
-| 5 · Pixels, as the floor | A Citrix or remote-desktop window can be operated; the harness picks pixels only after trying the ladder; grounding can be switched to a locally hosted model without touching the executor | `test_stage5.py`: a window that is one canvas (the Citrix stand-in) operated at 1x and 2x, moved and resized mid-task, by a text-only model naming targets and by a vision model giving pixels in an 800-pixel screenshot. `screen_act` refuses until `desktop_inspect` found nothing to act on. The submit is gated with the typed value, and Escape is never sent. The same task passes with grounding pointed at a local UI-TARS-style endpoint by configuration alone. `test_integration.py` covers screen watching and "Ask about this screen" through the control plane |
-| 6 · Connectors and scale | IT can deploy through Intune and control MCP access from Settings without talking to us. **Built:** per-connector consent; ticketing, mail, calendar, team-sites and ledger connectors; saved workflows; long-running tasks; managed policy, enrollment and Intune packaging. **Not built:** the ODR | `test_stage6.py`, `test_stage6_workplace.py`, against real MCP servers over stdio: consent once per connector, remembered until revoked; connectors policy does not allow are never started; every change gated with its exact values (recipients outside the organisation flagged, before and after, diffs); a ticket or email carrying instructions taints the run. `test_stage6_long.py`: a reconciliation waited for with progress; after the agent is killed, a new process waits for the same operation rather than starting another, and says honestly what became of each interrupted call. `test_stage6_managed.py`: device-management settings only narrow, and the ADMX template writes exactly what the agent reads. `test_integration.py`: consent and revocation from the web; a run surviving an agent restart through the control plane; an enrolled agent that does nothing until its person confirms it. `server/test/stage2.test.ts`: saved workflows |
-| 6.5 · The local decision model | Screening and element selection meet the Jev-measured bar with no call leaving the customer's network, and both adapters stay green in CI. **Built:** the Laya adapter (a `laya-serve` inside the network, or local weights), one `/v1/systemone` wire shared with Jev, the network confinement, labelling and export of logged decisions, and measurement against a reference report. **Not done:** a fine-tuned checkpoint, Jev's measurement, and so the bar itself | `test_stage65.py`: the two adapters send identical requests; public endpoints and Hub ids are refused and environment proxies ignored; decisions from a real run are labelled and exported, split by run; calibration fails below the bar. With Laya installed (the **Laya adapter** CI job): every fixture question answered by Laya's own inference code from a checkpoint on disk, offline, and the same answers through Laya's own HTTP server. See [`docs/decision-local.md`](docs/decision-local.md) |
+Organised by what the product does. For each capability: where the code and
+tests are, what has been verified, and what has not. "Verified" means run
+against the real thing in this repository's tests or CI, which run on Linux.
+Nothing here has called a real model provider (see the first row).
 
-## What is not done, or not verified here
+| Capability | Code | Tests | Status |
+| --- | --- | --- | --- |
+| [Harness, event log, models](#harness-event-log-and-model-layer) | `harness/`, `log.py`, `models/` | `test_harness.py` | Verified with fake endpoints; **no real provider called** |
+| [Files](#files) | `tools/files.py`, `tools/formats.py` | `test_files.py` | Verified |
+| [Gates and screening](#gates-and-screening) | `gates.py`, `screening.py`, `decision/` | `test_decision.py` | Verified with the rules baseline; **Jev not called** |
+| [Local decision model](#local-decision-model-laya) | `decision/laya.py`, `decision/systemone.py` | `test_local_decision_model.py` | Adapter verified; **no trained checkpoint, no bar** |
+| [Sign-in, grants, policy, audit](#sign-in-devices-grants-policy-and-audit) | `server/` | `server/test/controlplane.test.ts`, `test_integration.py` | Verified; **SSO only against the development IdP** |
+| [Browser](#browser) | `browser/` | `test_browser.py` | Verified |
+| [Desktop (accessibility tree)](#desktop-accessibility-tree) | `desktop/` | `test_desktop.py` | Linux verified; **Windows and macOS never run** |
+| [Screen (pixels) and screen watching](#screen-pixels-and-screen-watching) | `screen/`, `watch.py` | `test_screen.py`, `test_integration.py` | Linux X11 verified; **Windows and macOS never run** |
+| [Connectors](#connectors) | `connectors/`, `demo/*_server.py` | `test_connectors.py`, `test_connectors_workplace.py` | Verified against sample servers only |
+| [Saved workflows](#saved-workflows) | `server/src/routes/runs.ts`, `web/src/pages/Workflow.tsx` | `server/test/controlplane.test.ts` | Verified |
+| [Long-running tasks and restarts](#long-running-tasks-and-restarts) | `harness/loop.py` (`resume`), `connectors/service.py` | `test_long_running.py`, `test_integration.py` | Verified |
+| [Deployment](#deployment-managed-policy-enrollment-windows-packaging) | `managed.py`, `deploy/windows/` | `test_deployment.py`, `test_integration.py` | Logic verified; **never run on Windows or Intune**; ODR not built |
+| [Platform check](#platform-check) | `platform_check.py` | `test_screen.py` | Linux verified |
 
-Said plainly, per the plan's own rule about never claiming what is not there:
+Paths under `agent/` are relative to `agent/src/ondo_agent/`, and test files to
+`agent/tests/`, unless they start with `server/` or `web/`.
 
-- **Real model providers were not called.** No API keys were available where this
-  was built. Both wire formats are tested against recorded-shape fake endpoints,
-  and the end-to-end tests use a scripted model that acts only on tool output. The
-  first run against real providers should be the §9 eval set, not a demo.
-- **Jev has not been called for real.** It goes through OpenRouter's System One
-  API (`https://openrouter.ai/api/v1/systemone`, model `typesafe/jev-1.13`,
-  `OPENROUTER_API_KEY`), per OpenRouter's documentation. Its wire
-  (`decision/systemone.py`, shared with Laya) has run against Laya's server and a
-  fake endpoint, not against OpenRouter. The committed thresholds
-  were measured on the rules baseline, which was tuned on the same 50 fixtures:
-  re-measure on a held-out set, and against Jev, before trusting them.
-- **SSO** (OIDC with PKCE, SAML) is implemented but was only exercised through the
-  development identity provider; no IdP was reachable. MDM-backed device posture
-  is not integrated (the "managed" flag is never set).
-- **Only the Linux desktop backend (AT-SPI) has run.** The Windows (`pywinauto`,
-  UI Automation) and macOS (`AXUIElement`) backends are written to the same
-  interface but have never executed; both are marked UNTESTED in their modules.
-  Run `test_stage4.py` on each platform, against a native test app, before
-  relying on them. macOS's Accessibility permission cannot be granted for the
-  user; the backend refuses to start and says where to allow it.
-- **Element picking uses the rules baseline** (word overlap) unless a decision
-  model is configured. It refuses vague targets rather than guessing, but real
-  enterprise apps will need per-app profiles (`desktop.profiles`) for unnamed and
-  duplicate controls.
-- **The screen rung has only run on Linux (X11).** The Windows (`screen/win32.py`)
-  and macOS (`screen/quartz.py`) screen backends are written to the same
-  interface but have never executed; both are marked UNTESTED. Run
-  `test_stage5.py` on each before relying on them. Wayland sessions are not
-  supported: they do not allow one app to capture or drive another's window.
-- **No real Citrix or RDP client was driven.** The remote session is a stand-in:
-  a GTK window drawn on one canvas, which is how such a window looks locally, but
-  real sessions add compression artefacts, latency and their own keyboard
-  handling. Try one before promising it.
-- **No real grounding model was run.** The vision grounder speaks the
-  OpenAI-compatible API and parses the UI-TARS, OS-Atlas and Qwen-VL coordinate
-  formats. It was tested against a local stand-in endpoint, not a UI-TARS or
-  OS-Atlas deployment. The OCR grounder is real but narrow: it finds text and the
-  input box beside a label, and refuses what it cannot see (icons, unlabelled
-  controls) rather than guessing. Those need a vision grounder.
-- **The prompt overlay is the web UI's**, over the Ondo window, not a native
-  overlay drawn over other apps. Screen watching on Linux reads which window is
-  active from AT-SPI; a window manager or toolkit that does not report it shows
-  as nothing on screen.
-- **Stage 6 is built, except the On-device Agent Registry (ODR).** The ODR is
-  prerelease and its documentation could not be reached from here, so
-  registering Ondo with it and using the built-in File Explorer and Settings
-  connectors are not built. `docs/deploy-windows.md` says what is ready for
-  them. The rest of "IT can deploy through Intune and control MCP access" is
-  built: managed policy, enrollment and packaging. But it **has not run on
-  Windows or on a real Intune tenant**. Start the manual **windows** workflow
-  first.
-- **The connectors were only run against sample servers** (`demo/ticketing_server.py`,
-  `demo/workplace_servers.py`), not a real service desk, Exchange, Google
-  Workspace, SharePoint or finance system. The streamable-HTTP transport
-  (`url:`) is written but untested.
-- **Long operations use declared tools, not the MCP Tasks extension.** The MCP
-  SDK here (2.2) defines the Tasks types but implements neither side. So a
-  connector's long operation is declared as a start tool plus a status tool,
-  and the agent keeps the handle in the log. When servers speak Tasks natively,
-  that is a new transport for the same `OperationDecl`.
-- **Stage 6.5 is built as far as it can go without labels, a GPU and a Jev measurement.**
-  The Laya adapter has run against Laya 0.3.22's own inference code and HTTP
-  server, but only with a tiny random checkpoint. Hugging Face was not
-  reachable from here, so no real Laya weights have run (the manual
-  **decision-measure** workflow can run them). No checkpoint has been
-  fine-tuned: logged decisions have no labels until a person adds them
-  (`ondo-agent decisions label`). Jev has not been measured, so there is no bar
-  to meet yet. The ONNX Runtime path is written but has not run. The bar's
-  element-choice half rests on 4 fixtures; add more before trusting it. See
-  [`docs/decision-local.md`](docs/decision-local.md).
-- **Office round-trips**: `openpyxl` keeps formulas (and macros in `.xlsm`) but
-  drops charts and images on save. The plan's small COM path for what the
-  libraries cannot do is not built.
+### Harness, event log and model layer
+
+One append-only, hash-chained event log per run is the only state. The model's
+context is rebuilt from it every turn, and runs can be replayed, forked onto
+another model, or resumed from it.
+
+- **Verified:**
+  - the same run through both wire formats (OpenAI-compatible chat and the
+    Messages API), against recorded-shape fake endpoints;
+  - replay from the log, and a fork onto another model;
+  - the trajectory naming the source of every context injection.
+- **Not verified:** **no real model provider has been called.** No API key was
+  available where this was built. The first real run should be the eval set
+  (`docs/design.md` §9), across models and both wire formats, recording cost, latency and
+  success per model. The end-to-end tests use a scripted model (the `demo`
+  profile) that acts only on what the tools return.
+
+### Files
+
+Reads and writes Office documents, PDFs and text in the folders a person
+grants. Every write shows a diff and stops for approval first.
+
+- **Verified:** 12 contracts and a workbook read in one turn; the order diff →
+  approval → write; a refused write changes nothing; exclusions and symlink
+  escapes are blocked; revoking files mid-run stops the file tools.
+- **Not built:** `openpyxl` keeps formulas (and macros in `.xlsm`) but drops
+  charts and images on save. The small COM path in `docs/design.md`, for what the libraries
+  cannot do, is not built.
+
+### Gates and screening
+
+The order of authority:
+
+1. Deterministic rules decide first.
+2. Then a tool's declared effects. A declaration that names every effect a
+   call can have settles the rest as absent.
+3. Then the decision model, as a second net for what nobody enumerated.
+4. A run that read flagged content gates every effect.
+
+Every untrusted read (files, pages, windows, connector results) is fenced and
+screened.
+
+- **Verified:**
+  - a rule raises a gate and the model cannot lower it;
+  - uncertainty and outages escalate to a person;
+  - injected content is fenced, flagged and taints the run;
+  - thresholds come from `python -m ondo_agent.decision.calibrate` over 50
+    hand-labelled actions (`agent/config/thresholds.json`), and CI fails if
+    they drift.
+- **Not verified:** **Jev has not been called for real.** It goes through
+  OpenRouter's System One API (`https://openrouter.ai/api/v1/systemone`, model
+  `typesafe/jev-1.13`, `OPENROUTER_API_KEY`). Its wire (`decision/systemone.py`,
+  shared with Laya) has run against Laya's server and a fake endpoint, not
+  against OpenRouter.
+- **Caution:** the thresholds were measured on the rules baseline, which was
+  tuned on the same 50 fixtures. Re-measure on a held-out set, and against
+  Jev, before trusting them.
+
+### Local decision model (Laya)
+
+The same questions as Jev, answered inside the customer's network: a
+`laya-serve` endpoint, or local weights. Logged decisions can be labelled and
+exported for training. See [`docs/decision-local.md`](docs/decision-local.md).
+
+- **Verified:**
+  - Jev and Laya send identical requests on one wire;
+  - public endpoints and Hub ids are refused, and environment proxies ignored;
+  - decisions from a real run are labelled and exported, split by run;
+  - calibration fails below the bar.
+  - With Laya installed (the **Laya adapter** CI job), every fixture question
+    is answered by Laya's own inference code and its own HTTP server, offline.
+- **Not verified or not done:**
+  - Only a tiny random checkpoint has run, because Hugging Face was not
+    reachable; the manual **decision-measure** workflow can run real weights.
+  - No checkpoint has been fine-tuned: logged decisions have no labels until a
+    person adds them (`ondo-agent decisions label`).
+  - Jev has not been measured, so there is no bar to meet yet.
+  - The ONNX Runtime path has not run.
+  - The element-choice half of the bar rests on 4 fixtures.
+
+### Sign-in, devices, grants, policy and audit
+
+The control plane provides:
+
+- sign-in with SSO (OIDC with PKCE, SAML), and trusted devices;
+- SCIM;
+- pairing, and the three grants (files, screen, input);
+- organisation policy, set in the admin console;
+- a hash-chained audit log with SIEM export.
+
+Agents dial out to it over a websocket.
+
+- **Verified:** an admin revokes a grant mid-run and the run stops (a real
+  server and a real agent in `test_integration.py`); policy refuses grants it
+  excludes; the audit chain verifies.
+- **Not verified:** SSO only through the development identity provider, since
+  no real IdP was reachable. MDM-backed device posture is not integrated (the
+  "managed" device flag is never set).
 - **Placeholders** from the design (`[YOUR IDENTITY PROVIDER]`, `[YOUR MDM]`,
-  `[YOUR REGION]`, testimonial and footer) are left as placeholders.
+  `[YOUR REGION]`, the testimonial and the footer) are left as they are.
+
+### Browser
+
+Web portals through Playwright MCP and the accessibility tree, with no
+screenshots, restricted to allowed origins. Submitting stops for approval.
+
+- **Verified:**
+  - contracts from a granted folder keyed into the sample portal by a
+    text-only model;
+  - one approval, with exact before and after values;
+  - no images anywhere in the run;
+  - origins enforced before and after navigation;
+  - a refused submission leaves the portal untouched;
+  - revoking input mid-run stops the browser.
+
+### Desktop (accessibility tree)
+
+Native apps are driven by element name, not coordinates, behind the screen and
+input grants. Escape pressed twice takes the keyboard back, and the agent never
+sends Escape itself.
+
+- **Verified on Linux (AT-SPI):**
+  - a GTK billing app at 1× and 2× scale, moved and resized mid-task;
+  - targets named in words and picked by the decision layer;
+  - the submit gated with the exact value;
+  - stale elements re-queried once, and vague targets refused rather than
+    guessed;
+  - Escape twice, as real key presses, stopping the run.
+- **Not verified:** **the Windows (`desktop/uia.py`) and macOS (`desktop/ax.py`)
+  backends have never run.** Use
+  [`docs/testing-on-windows-and-mac.md`](docs/testing-on-windows-and-mac.md).
+  macOS's Accessibility permission cannot be granted for the user; the backend
+  refuses to start and says where to allow it.
+- **Limits:** element picking uses the rules baseline (word overlap) unless a
+  decision model is configured. Real enterprise apps will need per-app
+  profiles (`desktop.profiles`) for unnamed and duplicate controls.
+
+### Screen (pixels) and screen watching
+
+The last resort, for windows with no usable accessibility tree (Citrix, RDP):
+
+- screenshots, a pointer and a keyboard;
+- grounding by local OCR or a self-hosted vision model;
+- used only after the tree was inspected and found empty.
+
+Screen watching reports which shared window is in front, for **Ask about this
+screen**.
+
+- **Verified on Linux (X11):**
+  - a one-canvas window, standing in for Citrix, operated at 1× and 2×, moved
+    and resized mid-task;
+  - by a text-only model naming targets, and by a vision model giving pixel
+    positions;
+  - `screen_act` refuses until `desktop_inspect` found nothing to act on;
+  - the submit is gated, and Escape is never sent;
+  - grounding switched to a local UI-TARS-style endpoint by configuration
+    alone;
+  - screen watching through the control plane.
+- **Not verified:**
+  - **The Windows (`screen/win32.py`) and macOS (`screen/quartz.py`) backends
+    have never run.**
+  - No real Citrix or RDP client has been driven: real sessions add
+    compression artefacts, latency and their own keyboard handling.
+  - No real grounding model has run. The vision grounder parses the UI-TARS,
+    OS-Atlas and Qwen-VL formats, but was tested against a stand-in endpoint.
+  - The OCR grounder is real but narrow: it refuses icons and unlabelled
+    controls rather than guessing.
+- **Limits:**
+  - Wayland is not supported: it does not let one app capture or drive
+    another's window.
+  - The prompt overlay is the web UI's, not a native overlay over other apps.
+
+### Connectors
+
+Mail, calendar, team sites, ticketing and a ledger, reached over MCP. How they
+are governed:
+
+- Each connector is allowed by the person on its first use, and only if the
+  organisation's policy (and device management) allows it. Revoking it stops
+  the runs using it.
+- Every tool is declared in `connectors/catalog.py`: its effect, and the exact
+  values a person approves. Undeclared tools are not offered, and the server's
+  own descriptions are never shown to the model.
+- Results are fenced and screened.
+
+- **Verified**, against real MCP servers over stdio:
+  - consent once per connector, remembered until revoked, and "no" final for
+    the run;
+  - a connector policy does not allow is never started;
+  - every change gated with its exact values: recipients outside the
+    organisation flagged, before and after, diffs;
+  - a ticket or email carrying instructions taints the run;
+  - consent and revocation from the web, through the control plane.
+- **Not verified:**
+  - Only the sample servers (`demo/ticketing_server.py`,
+    `demo/workplace_servers.py`) have been used, not a real service desk,
+    Exchange, Google Workspace, SharePoint or finance system.
+  - The streamable-HTTP transport (`url:`) has not run.
+
+### Saved workflows
+
+A finished task's request can be saved by name. Saved workflows appear in the
+rail and as prompt-overlay suggestions, and can be run as is or edited for one
+run. Each run is an ordinary task.
+
+- **Verified:** saving from a run, running by name or with an edited request,
+  the list of past runs, privacy to the owner, and the audit trail.
+
+### Long-running tasks and restarts
+
+A run survives the agent process ending:
+
+- On reconnect, the control plane has the agent resume active runs from their
+  logs, and expires their old pending approvals.
+- `Harness.resume()` says honestly what became of each interrupted call.
+- A connector's long operation (`OperationDecl`) is waited for by its handle,
+  with progress shown, and after a restart the same operation is waited for
+  rather than started again.
+
+- **Verified:**
+  - a reconciliation waited for, with progress;
+  - the harness killed mid-operation, then a new process finishing on the same
+    handle;
+  - an unapproved change reported as not having happened;
+  - through the whole stack, two runs surviving an agent restart.
+- **Not built:** the MCP Tasks extension itself. The MCP SDK here (2.2) defines
+  its types but implements neither side, so long operations use declared start
+  and status tools. Native Tasks would be a new transport for the same
+  `OperationDecl`.
+
+### Deployment: managed policy, enrollment, Windows packaging
+
+- **Managed policy:** the agent reads what Intune or Group Policy writes (the
+  registry), or a macOS configuration profile. It only ever narrows: allowed
+  and disabled connectors, grants, exclusions, screen watching and pixels.
+- **Enrollment:** IT puts an enrollment token in device management. The agent
+  sets itself up for the signed-in person, and does nothing until that person
+  confirms the computer is theirs.
+- **Windows packaging:** `deploy/windows` holds the ADMX template, Intune
+  scripts and `build.ps1`. See [`docs/deploy-windows.md`](docs/deploy-windows.md).
+
+- **Verified:**
+  - managed settings only narrow, in the agent's config and on the
+    organisation's policy;
+  - the ADMX template writes exactly the value names the agent reads;
+  - the deployed configuration loads and grants nothing;
+  - enrollment through the control plane: wrong token, unknown person,
+    confirm, "Not mine", and a revoked token.
+- **Not verified:**
+  - **None of it has run on Windows or on a real Intune tenant:** the registry
+    reader, `whoami /upn`, the PowerShell scripts, the PyInstaller build and
+    the ADMX import. Run the manual **windows** workflow, and
+    [`docs/testing-on-windows-and-mac.md`](docs/testing-on-windows-and-mac.md).
+  - The macOS profile reader has not run.
+- **Not built:**
+  - registering with the Windows On-device Agent Registry (ODR), and using its
+    built-in File Explorer and Settings connectors. The ODR is prerelease, and
+    its docs were unreachable; see `docs/deploy-windows.md`;
+  - a macOS installer.
+
+### Platform check
+
+`ondo-agent platform-check --window <name>` runs the platform-specific pieces
+against one open window, and prints PASS, FAIL or SKIP for each:
+
+- the desktop and screen backends;
+- OCR;
+- the Escape-twice listener;
+- the managed-policy reader.
+
+- **Verified on Linux** against the sample app, where every check passes.
+  It is the first step on Windows and macOS.
+
+### Code that is not used
+
+`agent/src/ondo_agent/log/` and `agent/src/ondo_agent/model/` are never
+imported: `log.py` and `models/` shadow them. They are waiting on the owner's
+OK to delete.

@@ -1,6 +1,6 @@
-"""Stage 5: pixels, as the floor.
+"""The screen: pixels, as the last resort.
 
-Done when: a Citrix or remote-desktop window can be operated; the harness picks
+Shown here: a Citrix or remote-desktop window can be operated; the harness picks
 pixels only after trying the ladder above; and grounding can be switched to a
 locally hosted model without touching the executor.
 
@@ -35,7 +35,7 @@ from ondo_agent.models.types import ImagePart
 from ondo_agent.runtime import assemble
 
 needs_screen = pytest.mark.skipif(
-    not screen_available(), reason="needs the Stage 4 desktop plus tesseract and gi-cairo"
+    not screen_available(), reason="needs the virtual desktop plus tesseract and gi-cairo"
 )
 THRESHOLDS = str(Path(__file__).resolve().parents[1] / "config" / "thresholds.json")
 REMOTE = "Remote billing"
