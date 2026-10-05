@@ -11,7 +11,7 @@ What runs, when, and what it protects. Everything here lives in `.github/`.
 | `ci` | **Laya adapter** | The self-hosted decision-model adapter no longer works with Laya's own inference code and HTTP server (a tiny random checkpoint, CPU torch; nothing downloaded from Hugging Face) |
 | `ci` | **Control plane and web tests** | Server or web tests fail, or either does not build |
 | `ci` | **Container image builds** | The Dockerfile does not build, or the image does not come up healthy and non-root |
-| `security` | **Secret scan** | gitleaks finds a secret anywhere in the history the PR adds |
+| `security` | **Secret scan** | gitleaks (the open-source CLI, pinned to the pre-commit version) finds a secret anywhere in the repository's history |
 | `security` | **Dependency review** (off by default, see below) | The PR adds a dependency with a high or critical advisory, or a GPL-3.0/AGPL-3.0 licence |
 | `security` | **Dependency audit** | A shipped npm dependency (server, web) or a declared agent dependency has a known high or critical advisory |
 | `codeql` | **CodeQL (python)**, **CodeQL (javascript-typescript)** | Reports security findings to Security → Code scanning |
