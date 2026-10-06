@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { ApiError, api, greeting, hhmm, isActive, useData, type Approval, type Run, type RunEvent } from "../api";
-import { AgentCard, Crumbs, RailFoot, RailHead, Shortcuts, TaskList, useShell } from "../components/Shell";
+import { ApiError, api, greeting, hhmm, isActive, useData, useScreen, type Approval, type Run, type RunEvent } from "../api";
+import { AgentCard, Crumbs, RailFoot, RailHead, SavedWorkflows, Shortcuts, TaskList, useShell } from "../components/Shell";
 import { Icon } from "../icons";
 import { useSession } from "../session";
 
 export function Workspace() {
-  const { me } = useSession();
+  const { me, reload: reloadMe } = useSession();
   const { openPrompt, toast } = useShell();
   const [scope, setScope] = useState<"mine" | "team" | "all">("mine");
   const { data: runs } = useData<Run[]>(`/api/runs?scope=${scope}`, (e) => e === "run" || e === "approval" || e === "run_event");
@@ -22,10 +22,20 @@ export function Workspace() {
     runningCount ? `${runningCount === 1 ? "One task is" : `${numberWord(runningCount)} tasks are`} running on your machine.` : "",
   ];
 
+  async function confirmAgent(id: string, mine: boolean) {
+    try {
+      await api(`/api/agents/${id}/confirm`, { body: { mine } });
+      toast(mine ? "Confirmed. Grant it what it needs in Manage permissions." : "Switched off. Your IT team can see that you did not recognise it.");
+      await reloadMe();
+    } catch (e) {
+      toast((e as ApiError).message);
+    }
+  }
+
   async function approve(a: Approval) {
     try {
       await api(`/api/approvals/${a.id}`, { body: { approved: true } });
-      toast("Approved. Ondo is carrying on.");
+      toast(a.kind === "consent" ? "Allowed. Ondo is carrying on." : "Approved. Ondo is carrying on.");
       void reloadApprovals();
     } catch (e) {
       toast((e as ApiError).message);
@@ -38,6 +48,7 @@ export function Workspace() {
         <RailHead newTask />
         <div className="rail-body" style={{ paddingTop: 16 }}>
           <TaskList />
+          <SavedWorkflows />
           <Shortcuts />
           <AgentCard />
         </div>
@@ -64,6 +75,20 @@ export function Workspace() {
             <p className="lead">{leadParts.filter(Boolean).join(" ")}</p>
           </div>
 
+          {me.agents.filter((a) => a.confirmed === 0).map((a) => (
+            <section key={a.id} className="card qm-rise" aria-label="Confirm this computer">
+              <div className="row" style={{ padding: "16px 20px", gap: 16, alignItems: "center" }}>
+              <span className="icon-square"><Icon name="monitor" size={17} /></span>
+              <span className="grow col" style={{ gap: 2 }}>
+                <span style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>Your IT team set up Ondo on {a.hostname || "a computer"} for you</span>
+                <span className="caption">{a.os ? `${a.os} · ` : ""}It does nothing until you say it is yours. If you do not recognise it, say so and it is switched off.</span>
+              </span>
+              <button className="btn btn-sm" onClick={() => void confirmAgent(a.id, false)}>Not mine</button>
+              <button className="btn btn-sm btn-primary" onClick={() => void confirmAgent(a.id, true)}>Yes, it's mine</button>
+              </div>
+            </section>
+          ))}
+
           <section className="card" aria-labelledby="waiting">
             <div className="card-head">
               <span id="waiting" className="eyebrow-sm">Waiting on you</span>
@@ -75,13 +100,13 @@ export function Workspace() {
               <div key={a.id}>
                 {i > 0 && <div className="divider" />}
                 <div className="row" style={{ padding: "16px 20px", gap: 16 }}>
-                  <span className="icon-square"><Icon name={a.effects.includes("sends_externally") ? "mail" : a.effects.includes("file_write") ? "file" : "card"} size={17} /></span>
+                  <span className="icon-square"><Icon name={a.kind === "consent" ? "plug" : a.effects.includes("sends_externally") ? "mail" : a.effects.includes("file_write") ? "file" : "card"} size={17} /></span>
                   <span className="grow col" style={{ gap: 2 }}>
                     <span style={{ fontSize: 16, fontWeight: 600, color: "var(--ink)" }}>{a.title}</span>
                     <span className="caption">{a.run_title} · {changedLine(a)}</span>
                   </span>
                   <Link to={`/app/runs/${a.run_id}`} className="btn btn-sm">Review</Link>
-                  <button className="btn btn-sm btn-primary" onClick={() => approve(a)}>Approve</button>
+                  <button className="btn btn-sm btn-primary" onClick={() => approve(a)}>{a.kind === "consent" ? "Allow" : "Approve"}</button>
                 </div>
               </div>
             ))}
@@ -141,6 +166,7 @@ function Stat({ n, label }: { n: number | undefined; label: string }) {
 }
 
 function changedLine(a: Approval): string {
+  if (a.kind === "consent") return "First use of a connector: allow it?";
   const n = a.values.filter((v) => v.before != null).length;
   return n ? `${n} value${n === 1 ? "" : "s"} change${n === 1 ? "s" : ""}` : a.summary;
 }
@@ -198,11 +224,7 @@ function AssistantPanel() {
         </button>
       </header>
       <div style={{ flexGrow: 1, padding: 20, display: "flex", flexDirection: "column", gap: 12, overflowY: "auto" }}>
-        <div className="context-chip">
-          <span className={`dot ${agent?.connected ? "dot-accent qm-pulse" : "dot-ring-light"}`} />
-          <span className="grow">{!agent ? "No desktop agent paired" : agent.connected ? `${agent.grants.files.scope.length} granted folder${agent.grants.files.scope.length === 1 ? "" : "s"} · ${agent.grants.screen.granted && agent.capabilities?.screen ? `${agent.grants.screen.scope.length || "all"} shared window${agent.grants.screen.scope.length === 1 ? "" : "s"}` : "no windows shared"}` : "Desktop agent offline"}</span>
-          <Link to="/pair" style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-hover)" }}>Change</Link>
-        </div>
+        <ScreenChip />
         {asked.length === 0 && (
           <div className="bubble-bot qm-rise">
             Ask about a file or a figure, or say what to do next. I read only the folders you granted, and anything that changes something stops for you first.
@@ -221,6 +243,48 @@ function AssistantPanel() {
         <span className="caption">Escape twice stops any running task.</span>
       </form>
     </aside>
+  );
+}
+
+/** The context chip: what Ondo can see right now, and a way to ask about it. */
+function ScreenChip() {
+  const { me } = useSession();
+  const { openPrompt, toast } = useShell();
+  const agent = me?.agents[0];
+  const { data } = useScreen(agent?.id);
+  const s = data?.screen;
+  const shared = agent?.grants.screen.granted && agent.capabilities?.screen;
+  const summary = !agent ? "No desktop agent paired"
+    : !agent.connected ? "Desktop agent offline"
+    : `${agent.grants.files.scope.length} granted folder${agent.grants.files.scope.length === 1 ? "" : "s"} · ${shared ? `${agent.grants.screen.scope.length || "all"} shared window${agent.grants.screen.scope.length === 1 ? "" : "s"}` : "no windows shared"}`;
+  async function resume() {
+    try { await api(`/api/agents/${agent!.id}/watch`, { body: { on: true } }); } catch (e) { toast((e as ApiError).message); }
+  }
+  return (
+    <div className="col" style={{ gap: 8 }}>
+      <div className="context-chip">
+        <span className={`dot ${agent?.connected ? "dot-accent qm-pulse" : "dot-ring-light"}`} />
+        <span className="grow">{summary}</span>
+        <Link to="/pair" style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-hover)" }}>Change</Link>
+      </div>
+      {agent?.connected && shared && s && (
+        s.watching ? (
+          s.window && (
+            <div className="context-chip qm-rise">
+              <Icon name="monitor" size={15} color="var(--ink-secondary)" />
+              <span className="grow" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.window}>On screen: {s.title ?? s.window}</span>
+              <button type="button" className="link-btn" onClick={() => openPrompt("", { window: s.window!, title: s.title ?? undefined })}>Ask about this screen</button>
+            </div>
+          )
+        ) : (
+          <div className="context-chip qm-rise">
+            <Icon name="monitor" size={15} color="var(--ink-muted)" />
+            <span className="grow">Not watching the screen</span>
+            <button type="button" className="link-btn" onClick={resume}>Resume</button>
+          </div>
+        )
+      )}
+    </div>
   );
 }
 

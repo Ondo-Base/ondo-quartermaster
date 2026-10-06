@@ -1,7 +1,10 @@
 {
   "name": "ondo-quartermaster",
   "private": true,
-  "workspaces": ["server", "web"],
+  "workspaces": [
+    "server",
+    "web"
+  ],
   "scripts": {
     "dev": "npm run dev --workspace server & npm run dev --workspace web",
     "build": "npm run build --workspace web && npm run build --workspace server",
@@ -10,5 +13,9 @@
   },
   "devDependencies": {
     "@playwright/mcp": "0.0.82"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true
   }
 }

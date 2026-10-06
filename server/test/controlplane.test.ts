@@ -1,6 +1,6 @@
-// Stage 2: login, policy, audit.
-// Done when: an admin can revoke a grant mid-run from the console and the run
-// stops. The agent side of "stops" is covered by agent/tests/test_integration.py;
+// The control plane: sign-in, devices, pairing, grants, policy, audit, screen
+// watching, connector consent and saved workflows. First: an admin revokes a
+// grant mid-run from the console and the run stops. The agent side of "stops" is covered by agent/tests/test_integration.py;
 // here the control plane's half: the revocation reaches the agent immediately.
 
 import { createHmac } from "node:crypto";
@@ -256,5 +256,150 @@ describe("audit export and SIEM", () => {
     expect(n).toBeGreaterThan(3);
     expect(got[0].sig).toBe("sha256=" + createHmac("sha256", "s3cret").update(got[0].body).digest("hex"));
     expect(await forwardOnce(built.ctx.db, fake)).toBe(0); // nothing new
+  });
+});
+
+describe("screen watching", () => {
+  it("knows which shared window is in front, starts runs about it, and pauses on Escape", async () => {
+    const mara = await signedIn("mara.okonjo@northwind-ops.com");
+    const agent = await FakeAgent.pair(mara);
+    await mara.req("PUT", `/api/agents/${agent.id}/grants/screen`, { granted: true, scope: ["Remote billing"] });
+    await agent.next((m) => m.type === "grants" && m.grants.screen.granted);
+    expect((await mara.req("GET", `/api/agents/${agent.id}/screen`)).json.screen).toBeNull();
+
+    const win = "wfica — Remote billing — Citrix Workspace";
+    agent.send({ type: "screen_context", window: win, title: "Remote billing — Citrix Workspace", watching: true });
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await mara.req("GET", `/api/agents/${agent.id}/screen`)).json.screen).toMatchObject({ window: win, title: "Remote billing — Citrix Workspace", watching: true });
+    // Only the owner sees what is in front of them.
+    const admin = await signedIn("it.admin@northwind-ops.com");
+    expect((await admin.req("GET", `/api/agents/${agent.id}/screen`)).status).toBe(404);
+
+    // "Ask about this screen" names the window in front, and only that one.
+    const stale = await mara.req("POST", "/api/runs", { request: "What is this?", context: { window: "Personal mail" } });
+    expect(stale.status).toBe(409);
+    const ok = await mara.req("POST", "/api/runs", { request: "What does this say?", context: { window: win } });
+    expect(ok.status).toBe(200);
+    const start = await agent.next((m) => m.type === "start_run");
+    expect(start.context).toEqual({ window: win });
+
+    // Escape twice on the device pauses watching; the web can ask to resume it.
+    agent.send({ type: "screen_context", window: null, watching: false, reason: "escape_twice" });
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await mara.req("POST", "/api/runs", { request: "And now?", context: { window: win } })).status).toBe(409);
+    expect((await mara.req("POST", `/api/agents/${agent.id}/watch`, { on: true })).status).toBe(200);
+    expect(await agent.next((m) => m.type === "watch")).toMatchObject({ on: true });
+    const actions = (await admin.req("GET", "/api/admin/audit?limit=200")).json.map((e: any) => e.action);
+    expect(actions).toContain("agent.watch.paused");
+    expect(actions).toContain("agent.watch.resume_requested");
+
+    agent.ws.close();
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await mara.req("GET", `/api/agents/${agent.id}/screen`)).json.screen).toBeNull();
+  });
+});
+
+describe("connector consent", () => {
+  it("records a person's yes to a connector, bounded by policy, and takes it back", async () => {
+    const mara = await signedIn("mara.okonjo@northwind-ops.com");
+    const agent = await FakeAgent.pair(mara);
+    const ticketing = { id: "ticketing", name: "Ticketing", description: "The service desk.", tools: [{ name: "search_tickets", effect: "read" }] };
+    const billing = { id: "billing", name: "Billing", description: "Invoices.", tools: [{ name: "approve", effect: "move_money" }] };
+    agent.send({ type: "hello", device: { hostname: "NW-LT-4471", os: "Windows 11" }, capabilities: { screen: true, desktop: true, connectors: [ticketing, billing] } });
+    await new Promise((r) => setTimeout(r, 100));
+    let me = (await mara.req("GET", "/api/me")).json;
+    expect(me.agents[0].connectors.map((c: any) => [c.id, c.allowed_by_policy, c.consent])).toEqual([["ticketing", true, null], ["billing", false, null]]);
+
+    const run_id = (await mara.req("POST", "/api/runs", { request: "Reply to Halleck's ticket." })).json.run_id;
+    await agent.next((m) => m.type === "start_run");
+    agent.event(run_id, 0, "run_started", { request: "Reply", profile: "p", model: "m" });
+    agent.event(run_id, 1, "approval_requested", { id: "apr_c1", title: "Let Ondo use Ticketing?", summary: "", effects: [], values: [], kind: "consent", connector: "ticketing" });
+    agent.event(run_id, 2, "approval_requested", { id: "apr_c2", title: "Let Ondo use Billing?", summary: "", effects: [], values: [], kind: "consent", connector: "billing" });
+    agent.event(run_id, 3, "approval_requested", { id: "apr_e1", title: "Reply on NW-1042", summary: "", effects: ["sends_externally"], values: [] });
+    await new Promise((r) => setTimeout(r, 100));
+    expect((await mara.req("POST", "/api/approvals/apr_c1", { approved: true })).status).toBe(200);
+    expect((await agent.next((m) => m.type === "approval")).approval_id).toBe("apr_c1");
+    agent.event(run_id, 4, "approval_resolved", { approval_id: "apr_c1", approved: true, by: "mara.okonjo@northwind-ops.com", kind: "consent" });
+    // A connector policy does not allow is not recorded even if the device says yes,
+    agent.event(run_id, 5, "approval_resolved", { approval_id: "apr_c2", approved: true, by: "mara.okonjo@northwind-ops.com", kind: "consent" });
+    // and an effect approval cannot be passed off as a consent.
+    agent.event(run_id, 6, "approval_resolved", { approval_id: "apr_e1", approved: true, by: "mara.okonjo@northwind-ops.com", kind: "consent", connector: "billing" });
+    await new Promise((r) => setTimeout(r, 150));
+    me = (await mara.req("GET", "/api/me")).json;
+    expect(me.agents[0].connectors[0].consent).toMatchObject({ by: "mara.okonjo@northwind-ops.com" });
+    expect(me.agents[0].connectors[1].consent).toBeNull();
+    // The agent is told the consent is recorded.
+    expect((await agent.next((m) => m.type === "grants" && m.connectors?.ticketing)).connectors.ticketing.by).toBe("mara.okonjo@northwind-ops.com");
+    const consentApproval = (await mara.req("GET", `/api/runs/${run_id}`)).json.approvals.find((x: any) => x.id === "apr_c1");
+    expect(consentApproval).toMatchObject({ kind: "consent", connector: "ticketing" });
+
+    // An administrator takes it back; the agent hears at once.
+    const admin = await signedIn("it.admin@northwind-ops.com");
+    expect((await admin.req("DELETE", `/api/agents/${agent.id}/connectors/ticketing`)).status).toBe(200);
+    const revoked = await agent.next((m) => m.type === "grants" && m.reason === "revoked by an administrator");
+    expect(revoked.connectors).toEqual({});
+    expect((await admin.req("DELETE", `/api/agents/${agent.id}/connectors/ticketing`)).status).toBe(404);
+
+    // Consent again, then policy drops the connector: every consent to it goes.
+    agent.event(run_id, 7, "approval_requested", { id: "apr_c3", title: "Let Ondo use Ticketing?", summary: "", effects: [], values: [], kind: "consent", connector: "ticketing" });
+    await new Promise((r) => setTimeout(r, 100));
+    await mara.req("POST", "/api/approvals/apr_c3", { approved: true });
+    agent.event(run_id, 8, "approval_resolved", { approval_id: "apr_c3", approved: true, by: "mara.okonjo@northwind-ops.com", kind: "consent" });
+    await new Promise((r) => setTimeout(r, 100));
+    const policy = (await admin.req("GET", "/api/admin/overview")).json.policy;
+    expect(policy.allowed_connectors).toEqual(["ticketing", "mail", "calendar", "documents", "ledger"]);
+    await admin.req("PUT", "/api/admin/policy", { ...policy, allowed_connectors: [] });
+    expect((await agent.next((m) => m.type === "policy" && m.policy.allowed_connectors.length === 0)).policy.allowed_connectors).toEqual([]);
+    expect((await agent.next((m) => m.type === "grants" && m.reason === "no longer allowed by policy")).connectors).toEqual({});
+    const actions = (await admin.req("GET", "/api/admin/audit?limit=300")).json.map((e: any) => e.action);
+    expect(actions.filter((x: string) => x === "connector.consented")).toHaveLength(2);
+    expect(actions.filter((x: string) => x === "connector.revoked")).toHaveLength(2);
+    agent.ws.close();
+  });
+});
+
+describe("saved workflows", () => {
+  it("saves a request from a run, runs it again under its name, and keeps it private", async () => {
+    const mara = await signedIn("mara.okonjo@northwind-ops.com");
+    const agent = await FakeAgent.pair(mara);
+    agent.send({ type: "hello", device: { hostname: "NW-LT-4471", os: "Windows 11" }, capabilities: {} });
+    await new Promise((r) => setTimeout(r, 100));
+    const request = "Build the month-end close pack from the billing export in the Northwind drive.";
+    const first = (await mara.req("POST", "/api/runs", { request })).json.run_id;
+    await agent.next((m) => m.type === "start_run");
+
+    const saved = await mara.req("POST", "/api/workflows", { from_run: first, name: "Month-end close pack" });
+    expect(saved.status).toBe(200);
+    expect(saved.json).toMatchObject({ name: "Month-end close pack", request, created_from: first, runs: 0, last_run: null });
+    expect((await mara.req("POST", "/api/workflows", { from_run: first, name: "month-end CLOSE pack" })).status).toBe(409);
+    expect((await mara.req("POST", "/api/workflows", { name: "Empty" })).status).toBe(400);
+
+    // Running it sends its saved request to the agent, titled with its name.
+    const wid = saved.json.id;
+    const second = (await mara.req("POST", "/api/runs", { workflow_id: wid })).json.run_id;
+    const start = await agent.next((m) => m.type === "start_run" && m.run_id === second);
+    expect(start.request).toBe(request);
+    // Edited before running: the edit is what runs; the saved request is unchanged.
+    const third = (await mara.req("POST", "/api/runs", { workflow_id: wid, request: `${request} Use September.` })).json.run_id;
+    expect((await agent.next((m) => m.type === "start_run" && m.run_id === third)).request).toMatch(/Use September\.$/);
+    const detail = (await mara.req("GET", `/api/workflows/${wid}`)).json;
+    expect(detail.workflow).toMatchObject({ request, runs: 2 });
+    expect(detail.workflow.last_run.id).toBe(third);
+    expect(detail.runs.map((r: any) => [r.id, r.title])).toEqual([[third, "Month-end close pack"], [second, "Month-end close pack"]]);
+
+    // Someone else cannot see, run, change or delete it.
+    const admin = await signedIn("it.admin@northwind-ops.com");
+    expect((await admin.req("GET", "/api/workflows")).json).toEqual([]);
+    expect((await admin.req("GET", `/api/workflows/${wid}`)).status).toBe(404);
+    expect((await admin.req("POST", "/api/runs", { workflow_id: wid })).status).toBe(404);
+    expect((await admin.req("DELETE", `/api/workflows/${wid}`)).status).toBe(404);
+
+    expect((await mara.req("PUT", `/api/workflows/${wid}`, { name: "Month-end close" })).json.name).toBe("Month-end close");
+    expect((await mara.req("DELETE", `/api/workflows/${wid}`)).status).toBe(200);
+    expect((await mara.req("GET", "/api/workflows")).json).toEqual([]);
+    expect((await mara.req("POST", "/api/runs", { workflow_id: wid })).status).toBe(404);
+    const actions = (await admin.req("GET", "/api/admin/audit?limit=300")).json.map((e: any) => e.action);
+    for (const x of ["workflow.saved", "workflow.changed", "workflow.deleted"]) expect(actions).toContain(x);
+    agent.ws.close();
   });
 });

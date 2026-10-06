@@ -23,7 +23,7 @@ from .harness.loop import Budget, Harness
 from .log import EventLog
 from .models.gateway import ModelClient
 from .models.profile import ModelProfile, load_profiles
-from .permissions import Grant, PermissionBroker, Policy
+from .permissions import ConsentStore, Grant, PermissionBroker, Policy
 from .screening import Screener
 from .tools.files import file_tools
 from .tools.spec import ToolSpec
@@ -49,8 +49,12 @@ class Config:
 
     @classmethod
     def load(cls, path: str | Path) -> Config:
+        from . import managed
+
         path = Path(path)
         raw = _expand(yaml.safe_load(path.read_text()) or {})
+        # What device management set wins over the file, and only narrows.
+        raw = managed.apply(raw, managed.load())
         cfg = cls(raw, path.parent.resolve())
         prof = raw.get("models", {}).get("profiles_file")
         if prof:
@@ -75,6 +79,10 @@ class Config:
         return self.resolve(self.raw.get("agent", {}).get("runs_dir", ".ondo/runs"))
 
     @property
+    def consents_path(self) -> Path:
+        return self.resolve(self.raw.get("agent", {}).get("consents_file", ".ondo/consents.json"))
+
+    @property
     def labels_path(self) -> Path:
         return self.resolve(self.raw.get("agent", {}).get("decision_labels", ".ondo/decisions.jsonl"))
 
@@ -93,7 +101,10 @@ def make_broker(cfg: Config) -> PermissionBroker:
         "input": Grant("input", bool(inp.get("granted"))),
     }
     policy = Policy.from_dict(cfg.section("policy"))
-    return PermissionBroker(grants, policy)
+    store = ConsentStore(cfg.consents_path)
+    broker = PermissionBroker(grants, policy, store.load())
+    store.follow(broker)
+    return broker
 
 
 def make_model(cfg: Config, name: str | None = None) -> ModelClient:
@@ -137,6 +148,10 @@ def make_tools(cfg: Config) -> list[ToolSpec]:
         from .desktop.tools import desktop_tools
 
         tools += desktop_tools()
+        if cfg.section("screen").get("enabled"):
+            from .screen.tools import screen_tools
+
+            tools += screen_tools()
     return tools
 
 
@@ -213,8 +228,24 @@ async def assemble(
             from .desktop.session import DesktopSession
 
             services["desktop"] = DesktopSession.from_config(d)
+        if cfg.section("screen").get("enabled") and "screen" not in services:
+            from .screen.session import ScreenSession
+
+            services["screen"] = ScreenSession.from_config(cfg.section("screen"), services["desktop"])
+            cleanup.append(services["screen"].aclose)
         if d.get("escape_twice", True):
             cleanup.append(_escape_twice(broker))
+    if cfg.section("connectors"):
+        svc = services.get("connectors")
+        if svc is None:
+            from .connectors.service import ConnectorService
+
+            svc = ConnectorService.from_config(cfg.section("connectors"))
+            services["connectors"] = svc
+            cleanup.append(svc.aclose)
+        # Only what policy allows is started, and only what is running is offered.
+        await svc.start(only=[c for c in svc.decls if broker.connector_allowed(c)])
+        tools = tools + svc.tool_specs(broker)
     harness = Harness(
         model=model,
         tools=tools,

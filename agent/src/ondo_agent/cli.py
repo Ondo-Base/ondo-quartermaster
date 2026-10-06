@@ -115,11 +115,32 @@ def _search(a) -> int:
 
 def _tools_doc(a) -> int:
     from .browser.tools import browser_tools
+    from .connectors.catalog import CATALOG, PLAIN
     from .desktop.tools import desktop_tools
+    from .screen.tools import screen_tools
     from .tools.files import file_tools
     from .tools.spec import to_markdown
 
-    print(to_markdown(file_tools() + browser_tools() + desktop_tools()))
+    out = [to_markdown(file_tools() + browser_tools() + desktop_tools() + screen_tools()).rstrip(), ""]
+    out += [
+        "# Connector tools",
+        "",
+        "Offered as `<connector>_<tool>`, with the parameters the connector's MCP server declares. Each "
+        "connector is allowed by the person on first use, and only if the organisation's policy lists it.",
+        "",
+    ]
+    for c in CATALOG.values():
+        out += [
+            f"## {c.name} (`{c.id}`)",
+            "",
+            c.description,
+            "",
+            "| Tool | Effect | What it does |",
+            "| --- | --- | --- |",
+        ]
+        out += [f"| `{c.id}_{t.name}` | {PLAIN[t.effect]} | {t.description} |" for t in c.tools.values()]
+        out.append("")
+    print("\n".join(out).rstrip())
     return 0
 
 
@@ -140,6 +161,15 @@ def _legacy_app(a) -> int:
     return subprocess.call(args)
 
 
+def _remote_app(a) -> int:
+    import subprocess
+
+    args = [sys.executable, "-m", "ondo_agent.demo.remote_app"]
+    if a.out:
+        args += ["--out", a.out]
+    return subprocess.call(args)
+
+
 def _portal(a) -> int:
     from .demo.portal import Portal
 
@@ -152,6 +182,12 @@ def _portal(a) -> int:
             return 0
 
 
+def _platform_check(a) -> int:
+    from .platform_check import main as check
+
+    return check(a)
+
+
 async def _pair(a) -> int:
     from .connection import pair
 
@@ -160,11 +196,31 @@ async def _pair(a) -> int:
     return 0
 
 
-async def _connect(a) -> int:
-    from .connection import ControlPlaneAgent, Credentials
+async def _enroll(a) -> int:
+    from .connection import enroll, signed_in_user
 
     cfg = _cfg(a.config)
-    agent = ControlPlaneAgent(cfg, Credentials.load(Path(a.credentials)))
+    agent_cfg = cfg.section("agent")
+    server = a.server or agent_cfg.get("control_plane")
+    tok = a.token or agent_cfg.get("enrollment_token")
+    if not (server and tok):
+        print("no control plane or enrollment token: set them in device management, or pass --server and --token")
+        return 2
+    creds = await enroll(server, tok, a.user or signed_in_user(), Path(a.credentials))
+    print(f"enrolled as agent {creds.agent_id}; confirm this computer in Ondo on the web to start")
+    return 0
+
+
+async def _connect(a) -> int:
+    from .connection import ControlPlaneAgent, Credentials, enroll, signed_in_user
+
+    cfg = _cfg(a.config)
+    creds_path = Path(a.credentials)
+    agent_cfg = cfg.section("agent")
+    if not creds_path.exists() and agent_cfg.get("control_plane") and agent_cfg.get("enrollment_token"):
+        # Deployed by device management: set itself up for whoever is signed in.
+        await enroll(agent_cfg["control_plane"], agent_cfg["enrollment_token"], signed_in_user(), creds_path)
+    agent = ControlPlaneAgent(cfg, Credentials.load(creds_path))
     print(f"connecting to {agent.creds.server} as {agent.creds.agent_id}")
     await agent.run_forever()
     return 0
@@ -197,15 +253,30 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("legacy-app", help="open the sample legacy billing app (GTK) for the desktop rung")
     p.add_argument("--title", default="Legacy billing")
     p.add_argument("--out", default="")
+    p = sub.add_parser("remote-app", help="open the sample remote-session window (pixels only) for the screen rung")
+    p.add_argument("--out", default="")
     p = sub.add_parser("pair", help="pair this device with the control plane using the code from the web UI")
     p.add_argument("--server", required=True)
     p.add_argument("--code", required=True)
+    p.add_argument("--credentials", default=str(DEFAULT_CREDS))
+    p = sub.add_parser("platform-check", help="check this computer's desktop and screen stack against one window")
+    p.add_argument("--window", required=True, help="part of the title or app name of a window that is open")
+    p.add_argument("--type", default="", help="text to put in its first text field, then read back")
+    p.add_argument("--out", default="", help="folder to save the screenshot in")
+    p.add_argument("--backend", default="auto", help="auto, uia or ax (desktop); the screen backend follows")
+    p.add_argument("--no-screen", action="store_true", help="skip the screenshot and OCR")
+    p = sub.add_parser("enroll", help="set this computer up with the organisation's enrollment token")
+    p.add_argument("--server", default="", help="default: the ControlPlaneUrl device management set")
+    p.add_argument("--token", default="", help="default: the EnrollmentToken device management set")
+    p.add_argument("--user", default="", help="the signed-in person's work address (default: detected)")
     p.add_argument("--credentials", default=str(DEFAULT_CREDS))
     p = sub.add_parser("connect", help="hold the connection to the control plane and run tasks from it")
     p.add_argument("--credentials", default=str(DEFAULT_CREDS))
     sub.add_parser(
         "calibrate", help="measure the decision model and write gate thresholds (see --help)", add_help=False
     )
+
+    sub.add_parser("decisions", help="label logged decisions and export them to fine-tune (see --help)", add_help=False)
 
     if argv is None:
         argv = sys.argv[1:]
@@ -214,15 +285,22 @@ def main(argv: list[str] | None = None) -> None:
 
         cal(argv[1:])
         return
+    if argv[:1] == ["decisions"]:
+        from .decision.labels import main as dec
+
+        dec(argv[1:])
+        return
     a = ap.parse_args(argv)
-    handlers = {"run": _run, "replay": _replay, "fork": _fork, "pair": _pair, "connect": _connect}
+    handlers = {"run": _run, "replay": _replay, "fork": _fork, "pair": _pair, "enroll": _enroll, "connect": _connect}
     sync = {
+        "platform-check": _platform_check,
         "trajectory": _trajectory,
         "search": _search,
         "tools-doc": _tools_doc,
         "demo-data": _demo_data,
         "portal": _portal,
         "legacy-app": _legacy_app,
+        "remote-app": _remote_app,
     }
     if a.cmd in handlers:
         sys.exit(asyncio.run(handlers[a.cmd](a)))

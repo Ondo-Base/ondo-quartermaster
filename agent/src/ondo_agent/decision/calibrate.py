@@ -21,6 +21,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -151,19 +152,55 @@ async def run(model: DecisionModel, fixtures: Path, *, target_recall: float = 0.
     return report
 
 
+# The local model's bar: what a local model must match on the same fixtures before
+# screening and element selection can run without a hosted model.
+BAR = {
+    "screening recall": lambda r: r["screening"]["at_0.5"]["recall"],
+    "screening precision": lambda r: r["screening"]["at_0.5"]["precision"],
+    "element choice accuracy": lambda r: r["element_choice"]["accuracy"],
+}
+
+
+def against_bar(report: dict[str, Any], bar: dict[str, Any]) -> list[dict[str, Any]]:
+    """Compare a report with a reference report on the same fixtures. Each row passes when ours is at least theirs."""
+    if report.get("fixtures_sha256") != bar.get("fixtures_sha256"):
+        raise ValueError("the reference report was measured on different fixtures; re-measure it on these")
+    rows = []
+    for name, get in BAR.items():
+        ours, theirs = get(report), get(bar)
+        rows.append({"metric": name, "ours": ours, "bar": theirs, "model_bar": bar.get("model"), "ok": ours >= theirs})
+    return rows
+
+
 def main(argv: list[str] | None = None) -> None:
     from .logged import make_decision_model
 
     ap = argparse.ArgumentParser(description="Measure a decision model on labelled fixtures and write gate thresholds.")
     ap.add_argument("--fixtures", default=str(Path(__file__).resolve().parents[3] / "fixtures" / "decision"))
     ap.add_argument("--provider", default="rules")
-    ap.add_argument("--base-url", default="")
+    ap.add_argument("--base-url", default="", help="jev: defaults to OpenRouter")
     ap.add_argument("--path", default="")
+    ap.add_argument("--endpoint", default="", help="laya: a self-hosted laya-serve inside the network")
+    ap.add_argument("--checkpoint", default="", help="laya: a local checkpoint directory, run in this process")
+    ap.add_argument("--onnx", default="", help="laya: the exported .onnx graph for --checkpoint")
+    ap.add_argument("--internal-host", action="append", default=[], help="laya: a host that is inside the network")
+    ap.add_argument("--model", default="")
     ap.add_argument("--target-recall", type=float, default=0.95)
     ap.add_argument("--out", default="thresholds.json")
+    ap.add_argument("--bar", default="", help="a reference report (e.g. Jev's) to meet; exits 1 if any metric is below")
     a = ap.parse_args(argv)
-    model = make_decision_model({"provider": a.provider, "base_url": a.base_url, "path": a.path})
+    cfg: dict[str, Any] = {"provider": a.provider, "base_url": a.base_url}
+    if a.path:
+        cfg["path"] = a.path
+    if a.model:
+        cfg["model"] = a.model
+    if a.provider == "laya":
+        cfg.update(endpoint=a.endpoint, checkpoint=a.checkpoint, onnx=a.onnx, internal_hosts=a.internal_host)
+    model = make_decision_model(cfg)
     report = asyncio.run(run(model, Path(a.fixtures), target_recall=a.target_recall))
+    rows = against_bar(report, json.loads(Path(a.bar).read_text())) if a.bar else []
+    if rows:
+        report["bar"] = rows
     Path(a.out).write_text(json.dumps(report, indent=2) + "\n")
     for e, g in report["gates"].items():
         c = g["chosen"]
@@ -172,6 +209,12 @@ def main(argv: list[str] | None = None) -> None:
     print(f"{'injection screen':30s} t=0.50  precision={s['precision']:.2f} recall={s['recall']:.2f}")
     print(f"{'element choice':30s} accuracy={report['element_choice']['accuracy']}")
     print(f"wrote {a.out}")
+    for row in rows:
+        print(
+            f"{'PASS' if row['ok'] else 'FAIL'} {row['metric']}: {row['ours']} (bar {row['bar']}, {row['model_bar']})"
+        )
+    if any(not row["ok"] for row in rows):
+        sys.exit(1)
 
 
 if __name__ == "__main__":

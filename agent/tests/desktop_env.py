@@ -1,4 +1,4 @@
-"""A real, throwaway desktop for the Stage 4 tests: Xvfb, a D-Bus session and the
+"""A real, throwaway desktop for the desktop and screen tests: Xvfb, a D-Bus session and the
 AT-SPI registry, with GTK apps launched into it. Linux only."""
 
 from __future__ import annotations
@@ -10,6 +10,20 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+
+def screen_available() -> bool:
+    """The screen tests' extras on top of the desktop: OCR and cairo for the canvas app."""
+    if not available() or not shutil.which("tesseract"):
+        return False
+    try:
+        import gi
+
+        gi.require_foreign("cairo")
+        import PIL  # noqa: F401
+    except Exception:
+        return False
+    return True
 
 
 def available() -> bool:
@@ -101,6 +115,19 @@ class Desktop:
         p = subprocess.Popen(args, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self._procs.append(p)
         self.wait_window(title)
+        return p
+
+    def launch_remote(self, *, out: Path | None = None, scale: int = 1, title: str | None = None) -> subprocess.Popen:
+        """The pixels-only stand-in for a Citrix window (``demo/remote_app.py``)."""
+        from ondo_agent.demo.remote_app import TITLE
+
+        env = {**os.environ, "GDK_SCALE": str(scale)}
+        args = [sys.executable, "-m", "ondo_agent.demo.remote_app", "--title", title or TITLE]
+        if out:
+            args += ["--out", str(out)]
+        p = subprocess.Popen(args, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self._procs.append(p)
+        self.wait_window((title or TITLE).split(" — ")[0])
         return p
 
     def wait_window(self, title: str, timeout: float = 15) -> None:

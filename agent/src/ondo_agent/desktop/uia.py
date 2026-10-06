@@ -2,7 +2,7 @@
 
 UNTESTED: written against pywinauto's documented UIA API but never run, because
 this repository's CI and development environment are Linux. Run
-``tests/test_stage4.py`` on a Windows machine (with the GTK test app replaced by
+``tests/test_desktop.py`` on a Windows machine (with the GTK test app replaced by
 a WinForms or Win32 equivalent) before relying on it.
 """
 
@@ -60,6 +60,15 @@ class UiaBackend:
                     _log.debug("UIA window vanished while listing", exc_info=True)
                     continue
         return out
+
+    def active(self) -> Window | None:
+        import ctypes
+
+        h = ctypes.windll.user32.GetForegroundWindow()
+        for w in self.windows():
+            if w.id == str(h):
+                return w
+        return None
 
     def _window(self, window: Window):
         for w in self._desktop().windows():

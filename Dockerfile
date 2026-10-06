@@ -12,7 +12,7 @@
 # npm only and never stored in a layer:
 #   docker build --secret id=ca_bundle,src=/path/to/ca.pem .
 
-FROM node:22-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server/package.json server/
@@ -24,7 +24,7 @@ COPY server server
 COPY web web
 RUN npm run build --workspace web && npm run build --workspace server
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=8787 \

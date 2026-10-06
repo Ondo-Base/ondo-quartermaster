@@ -44,6 +44,13 @@ TOOL_RESULT = "tool_result"
 CONTEXT_COLLAPSED = "context_collapsed"
 FILE_ACCESS = "file_access"
 WINDOW_ACCESS = "window_access"
+CONNECTOR_ACCESS = "connector_access"
+# A long operation a connector runs on its side (a reconciliation), by its handle.
+# The handle is what lets a restarted agent wait for the same operation again.
+OPERATION_STARTED = "operation_started"
+OPERATION_FINISHED = "operation_finished"
+# The agent restarted during this run, and the run carried on from its log.
+RUN_RESTORED = "run_restored"
 DIFF_PROPOSED = "diff_proposed"
 DECISION = "decision"
 SCREENING = "screening"
@@ -210,6 +217,11 @@ class EventLog:
             if e.type == RUN_STARTED:
                 data = {**data, "forked_from": {"run_id": self.run_id, "seq": upto_seq}}
             child.append(e.type, e.source, data)
+        # Screenshots the copied events refer to come along, so the fork's context
+        # is the same pixels, not a stub.
+        from .blobs import BlobStore
+
+        BlobStore.beside(self.path).copy_to(BlobStore.beside(child.path))
         return child
 
 
@@ -239,3 +251,34 @@ def list_runs(root: Path) -> list[Path]:
     if not root.exists():
         return []
     return sorted(root.glob("*.jsonl"), key=lambda p: p.stat().st_mtime, reverse=True)
+
+
+def last_event(path: Path) -> Event | None:
+    """The final event in a log, reading only its tail."""
+    with open(path, "rb") as f:
+        f.seek(0, 2)
+        size = f.tell()
+        chunk = 1 << 16
+        while True:
+            start = max(0, size - chunk)
+            f.seek(start)
+            lines = [x for x in f.read(size - start).splitlines() if x.strip()]
+            if len(lines) > 1 or start == 0:
+                break
+            chunk *= 4  # one very long final event: read further back
+    if not lines:
+        return None
+    try:
+        return Event.from_dict(json.loads(lines[-1]))
+    except (ValueError, KeyError, TypeError):
+        return None  # a torn final line: the run did not end cleanly either
+
+
+def unfinished_runs(root: Path) -> dict[str, Path]:
+    """Runs whose log has no end: the process serving them ended first."""
+    out = {}
+    for p in list_runs(root):
+        e = last_event(p)
+        if e is not None and e.type not in (RUN_FINISHED, RUN_STOPPED):
+            out[e.run_id] = p
+    return out

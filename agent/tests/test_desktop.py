@@ -1,6 +1,6 @@
-"""Stage 4: semantic desktop control.
+"""Desktop control through the accessibility tree.
 
-Done when: a legacy internal app is driven by element name, not coordinates,
+Shown here: a legacy internal app is driven by element name, not coordinates,
 survives the window being moved and the display rescaled, and picks its target
 without an orchestrator turn.
 

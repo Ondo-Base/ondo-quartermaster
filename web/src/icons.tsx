@@ -26,6 +26,7 @@ const P: Record<string, ReactNode> = {
   upload: <><path d="M12 4v10" /><path d="M7 9l5-5 5 5" /><path d="M5 20h14" /></>,
   globe: <><circle cx="12" cy="12" r="9" /><path d="M3.5 9h17" /><path d="M3.5 15h17" /><path d="M12 3c2.5 2.5 2.5 15 0 18" /><path d="M12 3c-2.5 2.5-2.5 15 0 18" /></>,
   info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v6" /><path d="M12 7.5v.5" /></>,
+  plug: <><path d="M9 3.5v4.5" /><path d="M15 3.5v4.5" /><path d="M6.5 8h11v3a5.5 5.5 0 0 1-11 0z" /><path d="M12 16.5v4" /></>,
   "plus-circle": <><circle cx="12" cy="12" r="8.5" /><path d="M12 8v8" /><path d="M8 12h8" /></>,
 };
 

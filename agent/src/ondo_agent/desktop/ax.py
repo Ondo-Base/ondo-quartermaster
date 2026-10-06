@@ -80,6 +80,20 @@ class AxBackend:
                     )
         return out
 
+    def active(self) -> Window | None:
+        from AppKit import NSWorkspace
+        from ApplicationServices import AXUIElementCreateApplication
+
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is None:
+            return None
+        pid = app.processIdentifier()
+        w = _attr(AXUIElementCreateApplication(pid), "AXFocusedWindow")
+        if w is None:
+            return None
+        title = str(_attr(w, "AXTitle") or "")
+        return next((x for x in self.windows() if x.pid == pid and x.title == title), None)
+
     def _window(self, window: Window):
         from ApplicationServices import AXUIElementCreateApplication
 

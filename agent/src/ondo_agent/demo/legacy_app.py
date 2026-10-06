@@ -1,4 +1,4 @@
-"""A small "legacy" desktop billing app for the Stage 4 tests and demo (GTK 3).
+"""A small "legacy" desktop billing app for the desktop tests and demo (GTK 3).
 
 It stands in for the internal app with no API: a form with named fields, a
 Submit button, and one unnamed icon button, which real apps always have and a

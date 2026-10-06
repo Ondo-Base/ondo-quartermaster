@@ -1,10 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import type { Ctx } from "../app.js";
-import { all, now, one, run } from "../db.js";
+import { all, now, one, parse, run } from "../db.js";
 import { audit } from "../lib/audit.js";
 import { type UserRow, getAuthed, guard, sendCode, signIn, signOut, verifyCode } from "../lib/auth.js";
 import { verifyPassword } from "../lib/crypto.js";
 import { tooMany } from "../lib/limit.js";
+import { normalisePolicy } from "../lib/policy.js";
 import { oidcFinish, oidcStart, samlFinish, samlStart, ssoLabel, ssoMode } from "../lib/sso.js";
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -128,9 +129,12 @@ export function authRoutes(app: FastifyInstance, { db, cfg, hub }: Ctx): void {
     if (!a) return reply.code(401).send({ error: "signed_out" });
     const org = one<{ id: string; name: string; policy_json: string }>(db, "SELECT * FROM orgs WHERE id = ?", a.user.org_id)!;
     const device = a.session.device_id ? one(db, "SELECT id, name, os, managed, trusted_until FROM devices WHERE id = ?", a.session.device_id) : null;
-    const agents = all<{ id: string; hostname: string; os: string; created_at: number; last_seen: number }>(db,
-      "SELECT id, hostname, os, created_at, last_seen FROM agents WHERE user_id = ? AND revoked = 0 ORDER BY created_at DESC", a.user.id)
-      .map((ag) => ({ ...ag, connected: hub.isConnected(ag.id), grants: hub.grantsFor(ag.id), capabilities: hub.capabilitiesFor(ag.id) }));
+    // Confirmed agents first: agents[0] is the one tasks go to. An unconfirmed one is a
+    // computer IT enrolled for this person, waiting for them to say it is theirs.
+    const agents = all<{ id: string; hostname: string; os: string; created_at: number; last_seen: number; confirmed: number }>(db,
+      "SELECT id, hostname, os, created_at, last_seen, confirmed FROM agents WHERE user_id = ? AND revoked = 0 ORDER BY confirmed DESC, created_at DESC", a.user.id)
+      .map((ag) => ({ ...ag, connected: hub.isConnected(ag.id), grants: hub.grantsFor(ag.id), capabilities: hub.capabilitiesFor(ag.id),
+        connectors: hub.connectorsFor(ag.id, normalisePolicy(parse(org.policy_json, {}))) }));
     return {
       user: { id: a.user.id, email: a.user.email, name: a.user.name, title: a.user.title, role: a.user.role },
       org: { id: org.id, name: org.name, policy: JSON.parse(org.policy_json || "{}") },

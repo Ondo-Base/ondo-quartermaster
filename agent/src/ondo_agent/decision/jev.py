@@ -1,62 +1,36 @@
-"""Hosted decision-model adapter (Jev, TypeSafe AI).
+"""Hosted decision-model adapter (Jev, TypeSafe AI), called through OpenRouter.
 
 Jev is closed and hosted only, so on paths that carry customer file contents or
-screen text it is a third party in the data flow. It is the cloud-tier
-implementation; the on-prem tier needs a self-hosted model behind the same
-interface before screening can be sold locally (implementation plan §5, Stage 6.5).
+screen text it is a third party in the data flow, and through OpenRouter so is
+OpenRouter. It is the cloud-tier implementation; the on-prem tier needs a
+self-hosted model behind the same interface before screening can be sold
+locally (docs/design.md §5, docs/decision-local.md).
 
-OPEN QUESTION, carried from the plan: published sources disagree on the endpoint
-(``api.typesafe.ai/v1/systemone`` vs a docs mirror on a domain TypeSafe does not
-own). Nothing here hard-codes an endpoint. ``base_url`` and ``path`` come from
-configuration, and the request/response mapping is isolated in ``to_wire`` and
-``from_wire`` so it can be corrected against the official docs in one place.
-Do not point this at the mirror.
+The defaults are OpenRouter's System One API, per OpenRouter's documentation
+(openrouter.ai/docs/api/api-reference/systemone/submit-a-system-one-request):
+``POST https://openrouter.ai/api/v1/systemone`` with model ``typesafe/jev-1.13``,
+authenticated with the same ``OPENROUTER_API_KEY`` the orchestrator profiles
+use. The request and answers are the ``/v1/systemone`` shape in
+``systemone.py``, shared with the self-hosted Laya adapter. OpenRouter's
+OpenAI-compatible chat endpoint does not serve Jev, so ``/v1/chat/completions``
+is the wrong path. ``base_url``, ``path`` and ``model`` stay configurable for a
+direct TypeSafe account; ``~typesafe/jev-latest`` is OpenRouter's moving alias,
+but a pinned version keeps calibrated thresholds meaningful.
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import httpx
 
-from .interface import Answer, Boolean, Choice, Question, Score
+from . import systemone
+from .interface import Answer, Question
 
-
-def to_wire(state: str, questions: list[Question], model: str) -> dict[str, Any]:
-    wire_q = []
-    for q in questions:
-        item: dict[str, Any] = {"id": q.id, "type": q.kind, "question": q.prompt}
-        if isinstance(q, Choice):
-            item["options"] = q.options
-            if q.criteria:
-                item["criteria"] = q.criteria
-        elif isinstance(q, Score):
-            item["criteria"] = q.criteria
-        wire_q.append(item)
-    return {"model": model, "state": state, "questions": wire_q}
-
-
-def from_wire(questions: list[Question], data: dict[str, Any]) -> list[Answer]:
-    by_id = {a.get("id"): a for a in data.get("answers", [])}
-    out = []
-    for q in questions:
-        a = by_id.get(q.id)
-        if a is None:
-            # A missing answer is uncertainty, and uncertainty escalates.
-            out.append(Answer(q.id, None, 0.5, {}))
-            continue
-        dist = {str(k): float(v) for k, v in (a.get("distribution") or {}).items()}
-        if isinstance(q, Boolean):
-            p = float(a.get("probability", dist.get("true", 0.5)))
-            out.append(Answer(q.id, p >= 0.5, p, dist or {"true": p, "false": 1 - p}))
-        elif isinstance(q, Choice):
-            v = a.get("value")
-            out.append(Answer(q.id, v, float(a.get("probability", dist.get(str(v), 0.0))), dist))
-        else:
-            v = float(a.get("value", 0.5))
-            out.append(Answer(q.id, v, float(a.get("probability", v)), dist))
-    return out
+OPENROUTER_BASE_URL = "https://openrouter.ai/api"
+SYSTEMONE_PATH = "/v1/systemone"
+# Pinned, not the ~typesafe/jev-latest alias: thresholds are measured per model.
+DEFAULT_MODEL = "typesafe/jev-1.13"
 
 
 class JevDecisionModel:
@@ -65,15 +39,15 @@ class JevDecisionModel:
     def __init__(
         self,
         *,
-        base_url: str,
-        path: str = "",
-        model: str = "jev",
-        api_key_env: str = "JEV_API_KEY",
+        base_url: str = OPENROUTER_BASE_URL,
+        path: str = SYSTEMONE_PATH,
+        model: str = DEFAULT_MODEL,
+        api_key_env: str = "OPENROUTER_API_KEY",
         timeout_s: float = 5.0,
         client: httpx.AsyncClient | None = None,
     ):
         if not base_url:
-            raise ValueError("Jev base_url must be configured from the official docs; see module docstring")
+            raise ValueError("Jev base_url is empty; leave it unset for OpenRouter")
         self.url = base_url.rstrip("/") + ("/" + path.lstrip("/") if path else "")
         self.model = model
         self.api_key = os.environ.get(api_key_env, "")
@@ -84,10 +58,12 @@ class JevDecisionModel:
         if self.api_key:
             headers["authorization"] = f"Bearer {self.api_key}"
         try:
-            r = await self._client.post(self.url, json=to_wire(state, questions, self.model), headers=headers)
+            r = await self._client.post(
+                self.url, json=systemone.to_request(state, questions, self.model), headers=headers
+            )
             r.raise_for_status()
-            return from_wire(questions, r.json())
+            return systemone.from_response(questions, r.json())
         except (httpx.HTTPError, ValueError):
             # Decision failures never block and never permit: every question
             # answers "uncertain", which the gate escalates to a person.
-            return [Answer(q.id, None, 0.5, {"error": 1.0}) for q in questions]
+            return systemone.uncertain(questions, error=1.0)

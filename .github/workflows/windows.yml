@@ -1,0 +1,62 @@
+name: windows
+
+# The Windows side, started by hand (Actions, windows, Run workflow). It is not a
+# required check: the Windows backends and packaging have not been proven yet, and
+# this is how to prove them. It runs the agent's tests on Windows, builds the
+# Intune package, and installs, detects and uninstalls it on the runner.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  agent:
+    name: Agent tests on Windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22", cache: npm }
+      - run: npm ci
+      - name: Install the agent
+        run: python -m pip install -e "agent[dev,desktop]"
+      - name: Tests (the Linux desktop tests skip here; see docs/deploy-windows.md)
+        working-directory: agent
+        run: python -m pytest -q
+
+  package:
+    name: Build and install the Intune package
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Build
+        run: ./deploy/windows/build.ps1
+      - name: Install as SYSTEM would, then detect, then uninstall
+        run: |
+          ./out/intune/install.ps1 -Source out/intune
+          ./out/intune/detect.ps1
+          if ($LASTEXITCODE -ne 0) { throw "detection failed after install" }
+          Get-ScheduledTask -TaskPath "\Ondo\" -TaskName "Ondo Quartermaster" | Format-List TaskName, State
+          ./out/intune/uninstall.ps1
+          ./out/intune/detect.ps1
+          if ($LASTEXITCODE -eq 0) { throw "still detected after uninstall" }
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ondo-intune-package
+          path: out/intune
+          retention-days: 14

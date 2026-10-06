@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,9 @@ from ondo_agent.demo import northwind
 from ondo_agent.models.adapters.scripted import call, say
 from ondo_agent.models.types import Message
 from ondo_agent.runtime import Config
+
+# A developer's or runner's own device-management policy must never leak into tests.
+os.environ["ONDO_IGNORE_MANAGED"] = "1"
 
 
 @pytest.fixture
@@ -60,6 +64,19 @@ def spreadsheet_question_policy(drive: Path):
         return say(f"Row 14 is {m.group(1).strip()}. The workbook has a {m.group(2)}% uplift.")
 
     return policy
+
+
+def pytest_collection_modifyitems(config, items):
+    """In CI the desktop tests must run: a skip there would hide a broken stack."""
+    import os
+
+    if not os.environ.get("ONDO_REQUIRE_DESKTOP"):
+        return
+    from desktop_env import available, screen_available
+
+    missing = [n for n, ok in (("desktop", available()), ("screen", screen_available())) if not ok]
+    if missing:
+        raise pytest.UsageError(f"ONDO_REQUIRE_DESKTOP is set but the {' and '.join(missing)} stack is missing")
 
 
 @pytest.fixture(scope="session")

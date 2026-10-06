@@ -4,11 +4,15 @@
 agent:
   runs_dir: .ondo/runs
   decision_labels: .ondo/decisions.jsonl
+  consents_file: .ondo/consents.json   # connectors allowed on this device, when no control plane is attached
+  # Set by device management instead (docs/deploy-windows.md): control_plane, enrollment_token.
 
 models:
   profiles_file: config/profiles.yaml
-  orchestrator: ${ONDO_MODEL_PROFILE:-demo}
-  fallbacks: []
+  # OpenRouter for now; set ONDO_MODEL_PROFILE=demo for the scripted stand-in
+  # that needs no key, or =gateway once a LiteLLM is in front.
+  orchestrator: ${ONDO_MODEL_PROFILE:-openrouter}
+  fallbacks: [openrouter-fast]
 
 # The user's grants on this device. When connected, the control plane sends these.
 grants:
@@ -25,9 +29,50 @@ policy:
   excluded_paths: ["**/HR/**", "**/*payroll*", "**/*password*"]
   excluded_windows: ["Personal mail", "HR portal", "Password manager"]
   writes_require_approval: true
+  # Connectors people may allow. With a control plane, the organisation's policy
+  # replaces this list.
+  allowed_connectors: [ticketing, mail, calendar, documents, ledger]
+
+# Connectors, reached over MCP. Each one is allowed by the person on its first use
+# (and only if policy lists it); every change it makes stops for approval.
+connectors:
+  # Addresses outside this domain are flagged in approvals.
+  org_domain: northwind-ops.com
+  ticketing:
+    # The sample service desk (demo/ticketing_server.py). A real one is its MCP server:
+    # command: [...] for a local server, or url: https://... (streamable HTTP) with
+    # token_env naming the environment variable that holds its bearer token.
+    command: ["{python}", -m, ondo_agent.demo.ticketing_server, --store, .ondo/tickets.json]
+  # The sample mailbox, calendar and team sites (demo/workplace_servers.py).
+  mail:
+    command: ["{python}", -m, ondo_agent.demo.workplace_servers, --connector, mail, --store, .ondo/mail.json]
+  calendar:
+    command: ["{python}", -m, ondo_agent.demo.workplace_servers, --connector, calendar, --store, .ondo/calendar.json]
+  documents:
+    command: ["{python}", -m, ondo_agent.demo.workplace_servers, --connector, documents, --store, .ondo/documents.json]
+  # The sample finance system: a reconciliation runs for a while on its side, and
+  # the agent waits for it by its handle (poll_seconds, max_wait_hours).
+  ledger:
+    command: ["{python}", -m, ondo_agent.demo.workplace_servers, --connector, ledger, --store, .ondo/ledger.json]
+    poll_seconds: 5
+    max_wait_hours: 8
+  # Any other MCP server: declare each tool's effect, or it is not offered.
+  # billing:
+  #   url: https://mcp.billing.internal/mcp
+  #   token_env: BILLING_MCP_TOKEN
+  #   tools:
+  #     list_invoices: {effect: read}
+  #     approve_invoice: {effect: move_money, title: "Approved an invoice"}
 
 decision:
-  provider: rules          # rules | jev (see decision/jev.py before enabling)
+  provider: rules          # rules | jev | laya (see decision/jev.py and docs/decision-local.md first)
+  # Cloud (Jev) goes through OpenRouter by default, with OPENROUTER_API_KEY:
+  #   base_url: https://openrouter.ai/api   path: /v1/systemone   model: typesafe/jev-1.13
+  # On-prem (Laya), exactly one of:
+  #   endpoint: http://10.20.0.5:8000     # a laya-serve inside the network; public hosts are refused
+  #   internal_hosts: [.corp.example]      # names that are inside the network, when DNS says otherwise
+  #   checkpoint: C:/ProgramData/Ondo/laya  # local weights, run in the agent (pip install "ondo-agent[laya]")
+  # After switching provider, re-run calibration against it and point gates.thresholds_file at its output.
 
 screening:
   enabled: true
@@ -52,12 +97,30 @@ browser:
   no_sandbox: false
 
 desktop:
-  enabled: false            # semantic desktop control (Stage 4): needs the screen and input grants
+  enabled: false            # desktop control through the accessibility tree: needs the screen and input grants
   backend: auto             # atspi (Linux) | uia (Windows) | ax (macOS)
   escape_twice: true        # if the key listener cannot start, input control is switched off
   element_pick_threshold: 0.35
   profiles:                 # per-app names for controls the app leaves unnamed
     "Legacy billing": {"push button#1": "Refresh"}
+
+screen:
+  enabled: false            # pixels, the last resort: screenshots, pointer and keyboard; needs desktop.enabled
+  backend: auto             # x11 (Linux) | win32 (Windows) | quartz (macOS)
+  max_long_edge: 1280       # screenshots are sent no larger; the model profile can lower it
+  watch: true               # report which shared window is in front, for "Ask about this screen"
+  # Windows where pixels are the only rung, so the accessibility tree need not be
+  # read first. Everything else must be inspected before screen_act will act.
+  pixel_only_windows: ["*citrix*", "*wfica*", "*remote desktop*", "*mstsc*", "*vnc*", "*remmina*", "*freerdp*"]
+  ocr:
+    tesseract: tesseract    # local OCR for text-only models and the OCR grounder
+  grounding:
+    provider: ocr           # ocr (local, CPU) | vision | none
+    # A self-hosted grounding model keeps screenshots inside your network:
+    # provider: vision
+    # base_url: http://gpu-box.internal:8000/v1   # vLLM serving UI-TARS or OS-Atlas
+    # model: ui-tars-1.5-7b
+    # coords: absolute      # UI-TARS-1.5 and Qwen2.5-VL: absolute; UI-TARS 1.0, OS-Atlas: relative_1000
 
 budget:
   max_steps: 40

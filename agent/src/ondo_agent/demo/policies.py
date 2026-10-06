@@ -226,7 +226,15 @@ def demo_router(cfg, profile):
                 (m.text for m in messages if m.role == "user" and not m.text.startswith("<environment>")), ""
             )
             r = request.lower()
-            if any(w in r for w in ("billing app", "desktop app", "legacy")):
+            if "reconcile" in r:
+                chosen["p"] = reconciliation_policy()
+            elif "ticket" in r:
+                chosen["p"] = ticket_reply_policy(drive)
+            elif any(w in r for w in ("email", "priya", "calendar")):
+                chosen["p"] = mail_and_calendar_policy(drive)
+            elif "remote" in r:
+                chosen["p"] = remote_app_policy(drive, profile.extra.get("remote_window", "Remote billing"))
+            elif any(w in r for w in ("billing app", "desktop app", "legacy")):
                 chosen["p"] = legacy_app_policy(drive, profile.extra.get("legacy_window", "Legacy billing"))
             elif any(w in r for w in ("portal", "billing system", "key the", "submit")):
                 chosen["p"] = renewal_submit_policy(drive, portal)
@@ -299,5 +307,191 @@ def legacy_app_policy(drive: Path, window: str = "Legacy billing", *, between=No
             return call(("desktop_inspect", {"window": window}))
         m = re.search(r'label "Status" \[ref=\w+\]: "([^"]*)"', last)
         return say(f"The billing app says: {m.group(1)}." if m else "I could not read the app's status.")
+
+    return policy
+
+
+def remote_app_policy(drive: Path, window: str = "Remote billing", *, between=None):
+    """ "Update Halleck Logistics' annual value in the remote billing session from the
+    signed contract." Text-only: it never sees a pixel. It walks the ladder (the
+    accessibility tree first), then operates the window by naming targets in words
+    and reads the outcome from the OCR text that comes back with each screenshot.
+    ``between`` runs after typing and before submitting (the tests move the window)."""
+    contract = drive / "Contracts" / "Halleck_MSA_2026.pdf"
+
+    def policy(messages: list[Message], tools) -> ModelResponse:
+        t = _turns(messages)
+        results = _tool_results(messages)
+        last = results[-1][1] if results else ""
+        if t == 0:
+            return call(("read_file", {"path": str(contract)}))
+        c = next(iter(parse_contracts(results).values()), None)
+        if t == 1:
+            if not c:
+                return say("I could not read the new annual value from the contract.")
+            return call(("desktop_inspect", {"window": window}))
+        if t == 2:
+            if "screen_act" not in last:
+                return say("The window has controls I can use directly; this policy only covers remote sessions.")
+            return call(
+                (
+                    "screen_act",
+                    {
+                        "window": window,
+                        "actions": [
+                            {"action": "type", "target": "Annual value field", "text": str(c["new"]), "replace": True}
+                        ],
+                    },
+                )
+            )
+        if t == 3:
+            if "FAILED" in last:
+                return say("Typing the new value failed, so I stopped before submitting.")
+            if between:
+                between()
+            return call(
+                ("screen_act", {"window": window, "actions": [{"action": "click", "target": "the Submit button"}]})
+            )
+        if "not approved" in last:
+            return say("The change was not approved, so nothing was submitted in the billing session.")
+        m = re.search(r"Status: ([^\n<]*)", last)
+        return say(f"The billing session says: {m.group(1).strip()}." if m else "I could not read the status.")
+
+    return policy
+
+
+def ticket_reply_policy(drive: Path, customer: str = "Halleck"):
+    """ "Reply to Halleck's renewal ticket with the new annual value from the signed
+    contract, and mark it as waiting on the customer." Finds the ticket, reads it and
+    the contract together, replies publicly with the figure and its source, then
+    sets the status. Acts only on what the tools return."""
+    contract = drive / "Contracts" / "Halleck_MSA_2026.pdf"
+
+    def policy(messages: list[Message], tools) -> ModelResponse:
+        t = _turns(messages)
+        results = _tool_results(messages)
+        last = results[-1][1] if results else ""
+        if t == 0:
+            return call(("ticketing_search_tickets", {"query": f"{customer} renewal", "status": "open"}))
+        if t == 1:
+            m = re.search(r'"id": "(NW-\d+)"', last)
+            if not m:
+                return say(f"I could not find an open renewal ticket for {customer}." + _why(last))
+            return call(("ticketing_get_ticket", {"id": m.group(1)}), ("read_file", {"path": str(contract)}))
+        ticket = re.search(r'"id": "(NW-\d+)"', "\n".join(x for _, x in results if "NW-" in x))
+        c = next(iter(parse_contracts(results).values()), None)
+        if t == 2:
+            if not (ticket and c):
+                return say("I could not read the ticket and the contract together.")
+            body = (
+                f"Hello, the annual value for the new term is {c['new']:,} GBP, as set out in clause "
+                f"{c['clause']} of the signed agreement ({c['file']}). Kind regards, Northwind Operations"
+            )
+            return call(("ticketing_add_comment", {"id": ticket.group(1), "body": body, "public": True}))
+        if t == 3:
+            if "not approved" in last:
+                return say("The reply was not approved, so nothing was sent to the customer.")
+            return call(("ticketing_update_ticket", {"id": ticket.group(1), "status": "pending"}))
+        if "not approved" in last:
+            return say(f"I replied on {ticket.group(1)}, but the status change was not approved.")
+        return say(f"I replied on {ticket.group(1)} with {c['new']:,} GBP and set it to waiting on the customer.")
+
+    return policy
+
+
+def _why(text: str) -> str:
+    m = re.search(r"Permission denied: ([^.]*)", text)
+    return f" ({m.group(1)})" if m else ""
+
+
+def mail_and_calendar_policy(drive: Path):
+    """ "Answer Priya's email with the renewal value from the signed contract, and
+    offer her a 30-minute call next week." Finds the email, reads it and the
+    contract, drafts and sends the reply, finds free time and invites her."""
+    contract = drive / "Contracts" / "Halleck_MSA_2026.pdf"
+
+    def policy(messages: list[Message], tools) -> ModelResponse:
+        t = _turns(messages)
+        results = _tool_results(messages)
+        last = results[-1][1] if results else ""
+        joined = "\n".join(x for _, x in results)
+        if t == 0:
+            return call(("mail_search_mail", {"query": "renewal"}))
+        if t == 1:
+            m = re.search(r'"id": "(msg-\d+)"', last)
+            if not m:
+                return say("I could not find Priya's email." + _why(last))
+            return call(("mail_read_message", {"id": m.group(1)}), ("read_file", {"path": str(contract)}))
+        c = next(iter(parse_contracts(results).values()), None)
+        msg = re.search(r'"id": "(msg-\d+)"[^}]*"from": "([^"]+)"', joined)
+        if t == 2:
+            if not (c and msg):
+                return say("I could not read the email and the contract together.")
+            body = (
+                f"Hi Priya, the annual value for the renewed term is {c['new']:,} GBP (clause {c['clause']} of "
+                f"the signed agreement). Happy to talk it through; I'll send a time. Best, Mara"
+            )
+            return call(
+                (
+                    "mail_create_draft",
+                    {
+                        "to": msg.group(2),
+                        "subject": "Re: Renewal value for the new term",
+                        "body": body,
+                        "reply_to": msg.group(1),
+                    },
+                )
+            )
+        if t == 3:
+            d = re.search(r'"id": "(draft-\d+)"', last)
+            return call(("mail_send_draft", {"id": d.group(1)})) if d else say("The draft was not saved.")
+        if t == 4:
+            if "not approved" in last:
+                return say("The reply was not approved, so nothing was sent.")
+            return call(
+                (
+                    "calendar_find_free_time",
+                    {"duration_minutes": 30, "start": "2026-10-06T00:00", "end": "2026-10-10T23:59"},
+                )
+            )
+        if t == 5:
+            slot = re.search(r'"start": "([^"]+)", "end": "([^"]+)"', last)
+            if not slot:
+                return say("I sent the reply but found no free half hour next week.")
+            return call(
+                (
+                    "calendar_create_event",
+                    {
+                        "title": "Halleck renewal call",
+                        "start": slot.group(1),
+                        "end": slot.group(2),
+                        "attendees": msg.group(2) if msg else "",
+                    },
+                )
+            )
+        if "not approved" in last:
+            return say("I sent the reply, but the invitation was not approved.")
+        ev = re.search(r'"start": "([^"]+)"', last)
+        return say(
+            f"I replied to Priya with {c['new']:,} GBP and invited her to a call at {ev.group(1) if ev else '?'}."
+        )
+
+    return policy
+
+
+def reconciliation_policy(period: str = "2026-09"):
+    """ "Reconcile receivables for September." Starts the reconciliation on the
+    ledger's side, waits for it (the tool does the waiting), and reports what did
+    not match. Survives the agent restarting mid-way: the result arrives either way."""
+
+    def policy(messages: list[Message], tools) -> ModelResponse:
+        results = _tool_results(messages)
+        if not results:
+            return call(("ledger_start_reconciliation", {"period": period}))
+        last = results[-1][1]
+        refs = re.findall(r'"reference": "([^"]+)"', last)
+        if not refs:
+            return say("The reconciliation did not finish." + _why(last))
+        return say(f"{len(refs)} items did not match for {period}: {', '.join(refs)}.")
 
     return policy

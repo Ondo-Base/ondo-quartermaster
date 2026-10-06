@@ -1,6 +1,6 @@
-"""Stage 3: the browser.
+"""The browser: web portals through the accessibility tree.
 
-Done when: a task spanning the document store and a web portal completes with no
+Shown here: a task spanning the document store and a web portal completes with no
 screenshots in the transcript, and passes with a text-only model, proving the rung.
 
 These tests drive a real Chromium through Playwright MCP. They skip when either

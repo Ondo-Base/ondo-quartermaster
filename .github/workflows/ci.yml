@@ -48,10 +48,11 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Desktop accessibility stack for the Stage 4 tests
+      - name: Desktop stack for the desktop and screen tests
         run: |
           sudo apt-get update
-          sudo apt-get install -y xvfb dbus at-spi2-core python3-pyatspi gir1.2-atspi-2.0 gir1.2-gtk-3.0 xdotool
+          sudo apt-get install -y xvfb dbus at-spi2-core python3-pyatspi gir1.2-atspi-2.0 gir1.2-gtk-3.0 xdotool \
+            python3-gi-cairo tesseract-ocr
       - uses: actions/setup-node@v4
         with: { node-version: "22", cache: npm }
       - run: npm ci
@@ -62,11 +63,35 @@ jobs:
       # System Python, so the venv can see pyatspi and PyGObject from apt.
       - run: python3 -m venv --system-site-packages .venv && .venv/bin/pip install -e "agent[dev,desktop]"
       # Both wire formats run in every build. Agnosticism that is not tested is a story.
+      # ONDO_REQUIRE_DESKTOP: here, a missing desktop stack fails the run instead of skipping it.
       - run: .venv/bin/pytest -q agent/tests
+        env:
+          ONDO_REQUIRE_DESKTOP: "1"
       - name: Gate thresholds still match their measurement
         run: |
           .venv/bin/python -m ondo_agent.decision.calibrate --fixtures agent/fixtures/decision --out /tmp/t.json
           python3 -c 'import json,sys; a=json.load(open("/tmp/t.json"))["thresholds"]; b=json.load(open("agent/config/thresholds.json"))["thresholds"]; sys.exit(0 if a==b else "re-run calibration and commit agent/config/thresholds.json")'
+
+  laya:
+    name: Laya adapter
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      # CPU-only torch first, so pip does not fetch the CUDA build.
+      - run: |
+          python -m venv .venv
+          .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+          .venv/bin/pip install -e "agent[dev,laya]" "laya[serve]==0.3.22"
+      # Against Laya's own inference code and HTTP server, with a tiny random
+      # checkpoint written to disk: no weights are downloaded. A missing Laya
+      # fails the job instead of skipping.
+      - run: .venv/bin/pytest -q agent/tests/test_local_decision_model.py
+        env:
+          ONDO_REQUIRE_LAYA: "1"
 
   web-and-control-plane:
     name: Control plane and web tests

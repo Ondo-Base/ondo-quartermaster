@@ -26,6 +26,8 @@ class ImagePart:
 
     media_type: str
     data_b64: str
+    width: int = 0
+    height: int = 0
     type: Literal["image"] = "image"
 
 

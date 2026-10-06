@@ -28,11 +28,21 @@ const AUDITED: Record<string, string> = {
   permission_denied: "agent.permission.denied",
   grant_changed: "agent.grant.changed",
   window_access: "agent.window",
+  connector_access: "agent.connector",
+  operation_started: "agent.operation.started",
+  operation_finished: "agent.operation.finished",
+  run_restored: "agent.run.restored",
 };
 
+/** What the agent says is in front of the user, among the windows they shared.
+ * Held in memory only: it is presence, not a record. The window's contents never
+ * come here; only its name, and only for a window the screen grant covers. */
+export interface ScreenContext { window: string | null; title: string | null; watching: boolean; at: number }
+
 export class Hub {
-  agents = new Map<string, { socket: WebSocket; userId: string; orgId: string }>();
+  agents = new Map<string, { socket: WebSocket; userId: string; orgId: string; attachedAt: number }>();
   subscribers = new Set<Subscriber>();
+  screens = new Map<string, ScreenContext>();
 
   constructor(private db: DB) {}
 
@@ -87,9 +97,34 @@ export class Hub {
     return parse(r?.capabilities_json, {});
   }
 
+  /** Connectors the person allowed on this agent: { id: { by, at } }. */
+  consentsFor(agentId: string): Record<string, { by: string; at: number }> {
+    const out: Record<string, { by: string; at: number }> = {};
+    for (const c of all<{ connector: string; consented_by: string; consented_at: number }>(this.db,
+      "SELECT connector, consented_by, consented_at FROM consents WHERE agent_id = ?", agentId)) {
+      out[c.connector] = { by: c.consented_by, at: c.consented_at };
+    }
+    return out;
+  }
+
+  /** What the web shows for each connector the agent has: can it be used, and who allowed it. */
+  connectorsFor(agentId: string, policy: OrgPolicy) {
+    const caps = this.capabilitiesFor(agentId) as { connectors?: { id: string; name: string; description: string; tools: unknown[] }[] };
+    const consents = this.consentsFor(agentId);
+    return (caps.connectors ?? []).map((c) => ({
+      ...c,
+      allowed_by_policy: policy.allowed_connectors.includes(c.id),
+      consent: policy.allowed_connectors.includes(c.id) ? consents[c.id] ?? null : null,
+    }));
+  }
+
+  screenFor(agentId: string): ScreenContext | null {
+    return this.isConnected(agentId) ? this.screens.get(agentId) ?? null : null;
+  }
+
   pushGrants(agentId: string, by: string, reason = ""): void {
     const grants = this.grantsFor(agentId);
-    this.send(agentId, { type: "grants", by, reason, grants });
+    this.send(agentId, { type: "grants", by, reason, grants, connectors: this.consentsFor(agentId) });
   }
 
   pushPolicy(orgId: string, policy: OrgPolicy): void {
@@ -101,7 +136,7 @@ export class Hub {
   attach(agent: AgentRow, socket: WebSocket): void {
     const { org_id, policy_json } = this.orgOf(agent.user_id);
     this.agents.get(agent.id)?.socket.close(4000, "replaced by a newer connection");
-    this.agents.set(agent.id, { socket, userId: agent.user_id, orgId: org_id });
+    this.agents.set(agent.id, { socket, userId: agent.user_id, orgId: org_id, attachedAt: now() });
     run(this.db, "UPDATE agents SET last_seen = ? WHERE id = ?", now(), agent.id);
     audit(this.db, org_id, `agent:${agent.id}`, "agent.connected", agent.id, { hostname: agent.hostname });
     // The control plane is the source of truth for grants and policy once paired.
@@ -118,6 +153,7 @@ export class Hub {
       const cur = this.agents.get(agent.id);
       if (cur?.socket === socket) {
         this.agents.delete(agent.id);
+        this.screens.delete(agent.id);
         audit(this.db, org_id, `agent:${agent.id}`, "agent.disconnected", agent.id);
         this.publish(org_id, agent.user_id, "agent", { agent_id: agent.id, connected: false });
       }
@@ -131,9 +167,26 @@ export class Hub {
       run(this.db, "UPDATE agents SET hostname = ?, os = ?, capabilities_json = ? WHERE id = ?",
         String(d.hostname ?? ""), String(d.os ?? ""), JSON.stringify(msg.capabilities ?? {}), agent.id);
       this.publish(orgId, agent.user_id, "agent", { agent_id: agent.id, connected: true });
+      if (Array.isArray(msg.running) && Array.isArray(msg.unfinished)) this.reconcileRuns(agent, orgId, msg.running, msg.unfinished);
       return;
     }
     if (msg.type === "event") return this.ingest(agent, orgId, msg.event);
+    if (msg.type === "screen_context") {
+      const prev = this.screens.get(agent.id);
+      const next: ScreenContext = {
+        window: typeof msg.window === "string" && msg.window ? msg.window.slice(0, 300) : null,
+        title: typeof msg.title === "string" && msg.title && msg.window ? msg.title.slice(0, 300) : null,
+        watching: msg.watching !== false,
+        at: now(),
+      };
+      this.screens.set(agent.id, next);
+      if (prev?.watching !== next.watching) {
+        audit(this.db, orgId, `agent:${agent.id}`, next.watching ? "agent.watch.resumed" : "agent.watch.paused", agent.id,
+          { reason: String(msg.reason ?? "") });
+      }
+      this.publish(orgId, agent.user_id, "screen", { agent_id: agent.id, ...next });
+      return;
+    }
     if (msg.type === "run_status") {
       const r = one<{ user_id: string }>(this.db, "SELECT user_id FROM runs WHERE id = ? AND agent_id = ?", msg.run_id, agent.id);
       if (!r) return;
@@ -157,10 +210,10 @@ export class Hub {
         run(this.db, "UPDATE runs SET status = 'running', model = ?, updated_at = ? WHERE id = ?", `${d.profile}:${d.model}`, t, e.run_id);
         break;
       case "approval_requested":
-        run(this.db, `INSERT OR IGNORE INTO approvals (id, run_id, title, summary, effects_json, values_json, diff, tool, created_at)
-                      VALUES (?,?,?,?,?,?,?,?,?)`,
+        run(this.db, `INSERT OR IGNORE INTO approvals (id, run_id, title, summary, effects_json, values_json, diff, tool, kind, connector, created_at)
+                      VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
           d.id, e.run_id, d.title ?? "", d.summary ?? "", JSON.stringify(d.effects ?? []), JSON.stringify(d.values ?? []),
-          d.diff ?? null, d.tool ?? "", t);
+          d.diff ?? null, d.tool ?? "", d.kind === "consent" ? "consent" : "effect", d.connector ?? null, t);
         run(this.db, "UPDATE runs SET status = 'waiting', updated_at = ? WHERE id = ?", t, e.run_id);
         this.publish(orgId, r.user_id, "approval", { approval_id: d.id, run_id: e.run_id, status: "pending" });
         break;
@@ -169,6 +222,7 @@ export class Hub {
           d.approved ? "approved" : "refused", d.by ?? "", t, d.approval_id);
         run(this.db, "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ? AND status = 'waiting'", t, e.run_id);
         this.publish(orgId, r.user_id, "approval", { approval_id: d.approval_id, run_id: e.run_id, status: d.approved ? "approved" : "refused" });
+        this.recordConsent(agent, orgId, r.user_id, d);
         break;
       case "run_finished":
         run(this.db, "UPDATE runs SET status = 'finished', answer = ?, updated_at = ? WHERE id = ?", d.answer ?? "", t, e.run_id);
@@ -189,21 +243,77 @@ export class Hub {
         : e.type === "run_started" ? { request: d.request, model: d.model, profile: d.profile }
         : d;
       const actor = e.type === "approval_resolved" ? `user:${d.by}` : `agent:${agent.id}`;
-      const name = e.type === "file_access" ? `agent.file.${d.op}` : e.type === "window_access" ? `agent.window.${d.op}` : action;
+      const name = e.type === "file_access" ? `agent.file.${d.op}` : e.type === "window_access" ? `agent.window.${d.op}`
+        : e.type === "connector_access" ? `agent.connector.${d.op}` : action;
       audit(this.db, orgId, actor, name, e.run_id, { seq: e.seq, source: e.source, ...detail });
     }
     this.publish(orgId, r.user_id, "run_event", { run_id: e.run_id, seq: e.seq, type: e.type, source: e.source, data: d, ts: e.ts });
   }
 
+  /** A consent approval answered yes: that connector is allowed on this agent until
+   * revoked. Only if policy allows it, and only for a consent the agent asked for. */
+  private recordConsent(agent: AgentRow, orgId: string, userId: string, d: any): void {
+    if (!d.approved) return;
+    const ap = one<{ kind: string; connector: string | null }>(this.db, "SELECT kind, connector FROM approvals WHERE id = ?", d.approval_id);
+    if (!ap || ap.kind !== "consent" || !ap.connector) return;
+    const policy = normalisePolicy(parse(this.orgOf(agent.user_id).policy_json, {}));
+    if (!policy.allowed_connectors.includes(ap.connector)) return;
+    run(this.db, "INSERT OR REPLACE INTO consents (agent_id, connector, consented_by, consented_at) VALUES (?,?,?,?)",
+      agent.id, ap.connector, String(d.by ?? ""), now());
+    audit(this.db, orgId, `user:${d.by}`, "connector.consented", agent.id, { connector: ap.connector, approval_id: d.approval_id });
+    // Confirm it to the agent: from now on, leaving it out of a push is a revocation.
+    this.pushGrants(agent.id, String(d.by ?? ""), "");
+    this.publish(orgId, userId, "grants", { agent_id: agent.id, kind: `connector:${ap.connector}`, granted: true });
+  }
+
   // -- runs ---------------------------------------------------------------------------
 
-  startRun(agentId: string, userId: string, userEmail: string, request: string): string | null {
+  /** After the agent (re)connects: which of its runs carry on. ``running`` are runs
+   * this agent process is still serving (the connection dropped, nothing else);
+   * ``unfinished`` are logs it found on disk with no end (the process restarted). */
+  private reconcileRuns(agent: AgentRow, orgId: string, running: unknown[], unfinished: unknown[]): void {
+    const live = new Set(running.map(String));
+    const onDisk = new Set(unfinished.map(String));
+    const t = now();
+    // A run started after this connection opened was sent on it: not the old process's.
+    const since = this.agents.get(agent.id)?.attachedAt ?? t;
+    const active = all<{ id: string; user_id: string; status: string }>(this.db,
+      "SELECT id, user_id, status FROM runs WHERE agent_id = ? AND status IN ('queued','running','waiting','paused') AND created_at < ?",
+      agent.id, since);
+    for (const r of active) {
+      if (live.has(r.id)) continue;
+      // Whatever it was waiting on went with the old process; the resumed run asks again.
+      run(this.db, "UPDATE approvals SET status = 'expired' WHERE run_id = ? AND status = 'pending'", r.id);
+      this.publish(orgId, r.user_id, "approval", { run_id: r.id, status: "expired" });
+      if (onDisk.has(r.id)) {
+        const who = one<{ email: string }>(this.db, "SELECT email FROM users WHERE id = ?", r.user_id);
+        run(this.db, "UPDATE runs SET status = 'running', updated_at = ? WHERE id = ?", t, r.id);
+        audit(this.db, orgId, `agent:${agent.id}`, "run.resumed", r.id, { reason: "the desktop agent restarted" });
+        this.send(agent.id, { type: "resume_run", run_id: r.id, user: who?.email ?? "" });
+      } else {
+        const reason = "The desktop agent restarted and has no record of this task.";
+        run(this.db, "UPDATE runs SET status = 'stopped', reason = ?, updated_at = ? WHERE id = ?", reason, t, r.id);
+        audit(this.db, orgId, `agent:${agent.id}`, "run.lost", r.id, { reason });
+      }
+      this.publish(orgId, r.user_id, "run", { run_id: r.id });
+    }
+    // Logs for runs that ended while the agent was away: the agent closes them.
+    for (const runId of onDisk) {
+      const r = one<{ status: string; reason: string }>(this.db, "SELECT status, reason FROM runs WHERE id = ? AND agent_id = ?", runId, agent.id);
+      if (r && !["queued", "running", "waiting", "paused"].includes(r.status)) {
+        this.send(agent.id, { type: "abandon_run", run_id: runId, reason: r.reason || "Stopped while the desktop agent was offline." });
+      }
+    }
+  }
+
+  startRun(agentId: string, userId: string, userEmail: string, request: string, context?: { window: string },
+    workflow?: { id: string; name: string }): string | null {
     if (!this.isConnected(agentId)) return null;
     const runId = id("run").replace("_", "-");
     const t = now();
-    run(this.db, "INSERT INTO runs (id, agent_id, user_id, request, title, status, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
-      runId, agentId, userId, request, titleFor(request), "queued", t, t);
-    this.send(agentId, { type: "start_run", run_id: runId, request, user: userEmail });
+    run(this.db, "INSERT INTO runs (id, agent_id, user_id, request, title, status, workflow_id, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
+      runId, agentId, userId, request, workflow?.name ?? titleFor(request), "queued", workflow?.id ?? null, t, t);
+    this.send(agentId, { type: "start_run", run_id: runId, request, user: userEmail, ...(context ? { context } : {}) });
     return runId;
   }
 }

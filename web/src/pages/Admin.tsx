@@ -4,7 +4,7 @@
 
 import { useState, type FormEvent } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { ApiError, api, hhmm, useData, whenLabel, type Grants, type Policy } from "../api";
+import { ApiError, api, hhmm, useData, whenLabel, type AgentConnector, type Grants, type Policy } from "../api";
 import { BackHome, Crumbs, RailFoot, RailHead, useShell } from "../components/Shell";
 import { Icon } from "../icons";
 
@@ -12,7 +12,7 @@ interface Overview {
   org: { id: string; name: string };
   policy: Policy;
   users: { id: string; email: string; name: string; title: string; role: string; active: number; external_id: string | null }[];
-  agents: { id: string; hostname: string; os: string; connected: boolean; grants: Grants; last_seen: number; user?: { name: string; email: string } }[];
+  agents: { id: string; hostname: string; os: string; connected: boolean; grants: Grants; last_seen: number; user?: { name: string; email: string }; connectors?: AgentConnector[] }[];
   devices: { id: string; user_id: string; name: string; os: string; trusted_until: number; last_seen: number }[];
   active_runs: { id: string; title: string; status: string; user_name: string; created_at: number; agent_id: string }[];
   siem_sinks: { id: string; url: string; format: string; enabled: number; cursor: number; last_error: string }[];
@@ -89,6 +89,13 @@ export function AdminConsole() {
                     </span>
                   );
                 })}
+                {(a.connectors ?? []).filter((c) => c.consent).map((c) => (
+                  <span key={c.id} className="row" style={{ gap: 8, padding: "6px 10px", border: "1px solid var(--line-soft)", borderRadius: 3 }}>
+                    <span className="tag tag-accent">Allowed</span>
+                    <span className="ui">{c.name}</span>
+                    <button className="btn btn-sm btn-danger" onClick={() => call(() => api(`/api/agents/${a.id}/connectors/${c.id}`, { method: "DELETE" }), `${c.name} revoked. Any run using it stops.`)}>Revoke</button>
+                  </span>
+                ))}
               </div>
               {data.active_runs.filter((r) => r.agent_id === a.id).map((r) => (
                 <div key={r.id} className="row callout" style={{ alignItems: "center" }}>
@@ -138,6 +145,7 @@ export function AdminConsole() {
         ))}
       </section>
 
+      <EnrollmentCard />
       <SiemCard sinks={data.siem_sinks} onChange={reload} />
     </AdminShell>
   );
@@ -150,12 +158,13 @@ function PolicyCard({ policy, onSaved }: { policy: Policy; onSaved: () => void }
   const [paths, setPaths] = useState(policy.excluded_paths.join("\n"));
   const [windows, setWindows] = useState(policy.excluded_windows.join("\n"));
   const [origins, setOrigins] = useState((policy.allowed_origins ?? []).join("\n"));
+  const [connectors, setConnectors] = useState((policy.allowed_connectors ?? []).join("\n"));
   const [disabled, setDisabled] = useState<string[]>(policy.disabled_grants);
   const [writes, setWrites] = useState(policy.writes_require_approval);
   async function save(e: FormEvent) {
     e.preventDefault();
     try {
-      await api("/api/admin/policy", { method: "PUT", body: { excluded_paths: lines(paths), excluded_windows: lines(windows), allowed_origins: lines(origins), disabled_grants: disabled, writes_require_approval: writes } });
+      await api("/api/admin/policy", { method: "PUT", body: { excluded_paths: lines(paths), excluded_windows: lines(windows), allowed_origins: lines(origins), allowed_connectors: lines(connectors), disabled_grants: disabled, writes_require_approval: writes } });
       toast("Policy saved and sent to every connected agent.");
       onSaved();
     } catch (err) { toast((err as ApiError).message); }
@@ -163,10 +172,11 @@ function PolicyCard({ policy, onSaved }: { policy: Policy; onSaved: () => void }
   return (
     <form className="card" onSubmit={save}>
       <div className="card-head"><span className="eyebrow-sm">Policy</span><span className="grow" /><button className="btn btn-sm btn-primary">Save policy</button></div>
-      <div style={{ padding: 20, display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 20 }}>
+      <div style={{ padding: 20, display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 20 }}>
         <div className="field"><label className="label" htmlFor="p-paths">Excluded paths</label><textarea id="p-paths" className="input" rows={5} value={paths} onChange={(e) => setPaths(e.target.value)} /><span className="caption">One glob per line. Never readable, never grantable.</span></div>
         <div className="field"><label className="label" htmlFor="p-win">Excluded windows</label><textarea id="p-win" className="input" rows={5} value={windows} onChange={(e) => setWindows(e.target.value)} /><span className="caption">Never captured. The log says so when it bites.</span></div>
         <div className="field"><label className="label" htmlFor="p-orig">Allowed web origins</label><textarea id="p-orig" className="input" rows={5} value={origins} onChange={(e) => setOrigins(e.target.value)} /><span className="caption">The only sites the browser may open, e.g. https://billing.example.com. Empty: each agent's own configuration applies.</span></div>
+        <div className="field"><label className="label" htmlFor="p-conn">Connectors people may allow</label><textarea id="p-conn" className="input" rows={5} value={connectors} onChange={(e) => setConnectors(e.target.value)} /><span className="caption">One per line, e.g. ticketing. Each person still allows each one on first use. Removing one revokes it for everyone.</span></div>
       </div>
       <div className="row" style={{ padding: "0 20px 20px", gap: 24, flexWrap: "wrap" }}>
         {KINDS.map(({ kind, label }) => (
@@ -189,6 +199,55 @@ function ScimToken() {
   const [tok, setTok] = useState("");
   if (tok) return <span className="caption">SCIM token, shown once: <code style={{ userSelect: "all" }}>{tok}</code></span>;
   return <button type="button" className="btn btn-sm" onClick={async () => { try { setTok((await api<{ token: string }>("/api/admin/scim-tokens", { body: { label: "Identity provider" } })).token); } catch (e) { toast((e as ApiError).message); } }}>Create a SCIM token</button>;
+}
+
+interface EnrollmentToken { id: string; label: string; created_by: string; created_at: number; revoked_at: number | null; uses: number }
+
+/** Tokens for device management: agents deployed by Intune or Group Policy enroll
+ * themselves with one, and each person confirms their computer before it does anything. */
+function EnrollmentCard() {
+  const { toast } = useShell();
+  const { data, reload } = useData<EnrollmentToken[]>("/api/admin/enrollment-tokens", () => false);
+  const [label, setLabel] = useState("");
+  const [shown, setShown] = useState<{ label: string; token: string } | null>(null);
+  return (
+    <section className="card">
+      <div className="card-head"><span className="eyebrow-sm">Deployment: enrollment tokens</span></div>
+      <p className="ui secondary" style={{ padding: "12px 20px 0" }}>
+        Put a token in the EnrollmentToken setting of the Ondo policy template (Intune or Group Policy), with ControlPlaneUrl.
+        The agent then sets itself up for whoever signs in, and does nothing until they confirm the computer is theirs.
+      </p>
+      {shown && (
+        <div className="callout" style={{ margin: "12px 20px 0" }}>
+          <span className="caption">{shown.label}, shown once: <code style={{ userSelect: "all" }}>{shown.token}</code></span>
+        </div>
+      )}
+      {(data ?? []).map((t) => (
+        <div key={t.id} className="row" style={{ padding: "12px 20px", borderTop: "1px solid var(--line-divider)" }}>
+          <span className="grow col">
+            <span className="ui" style={{ color: t.revoked_at ? "var(--ink-muted)" : "var(--ink)" }}>{t.label}</span>
+            <span className="caption">Made by {t.created_by} {whenLabel(t.created_at).toLowerCase()} · {t.uses} computer{t.uses === 1 ? "" : "s"} enrolled{t.revoked_at ? " · revoked" : ""}</span>
+          </span>
+          {!t.revoked_at && <button className="btn btn-sm btn-danger" onClick={async () => {
+            if (!confirm(`Revoke “${t.label}”? Computers already enrolled keep working; no new ones can enroll with it.`)) return;
+            try { await api(`/api/admin/enrollment-tokens/${t.id}`, { method: "DELETE" }); void reload(); } catch (e) { toast((e as ApiError).message); }
+          }}>Revoke</button>}
+        </div>
+      ))}
+      <form className="row" style={{ padding: "12px 20px", gap: 8, borderTop: "1px solid var(--line-divider)" }}
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            const r = await api<{ label: string; token: string }>("/api/admin/enrollment-tokens", { body: { label } });
+            setShown(r); setLabel(""); void reload();
+          } catch (err) { toast((err as ApiError).message); }
+        }}>
+        <label className="sr-only" htmlFor="enr-label">Label</label>
+        <input id="enr-label" className="input grow" placeholder="Label, e.g. Intune: finance laptops" value={label} onChange={(e) => setLabel(e.target.value)} />
+        <button className="btn">Create a token</button>
+      </form>
+    </section>
+  );
 }
 
 function SiemCard({ sinks, onChange }: { sinks: Overview["siem_sinks"]; onChange: () => void }) {

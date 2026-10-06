@@ -7,7 +7,8 @@ What runs, when, and what it protects. Everything here lives in `.github/`.
 | Workflow | Job (status check name) | Fails when |
 | --- | --- | --- |
 | `ci` | **Lint and typecheck** | `ruff check` or `ruff format --check` fails on the agent; `actionlint` finds a broken workflow; TypeScript does not typecheck |
-| `ci` | **Agent tests** | Any agent test fails: both model wire formats, files, decision layer, real Chromium (Stage 3), real GTK app on a virtual display (Stage 4), the control-plane integration. Also fails if `agent/config/thresholds.json` no longer matches what calibration measures |
+| `ci` | **Agent tests** | Any agent test fails: both model wire formats, files, decision layer, real Chromium (the browser), a real GTK app on a virtual display (desktop and screen), the control-plane integration. Also fails if `agent/config/thresholds.json` no longer matches what calibration measures |
+| `ci` | **Laya adapter** | The self-hosted decision-model adapter no longer works with Laya's own inference code and HTTP server (a tiny random checkpoint, CPU torch; nothing downloaded from Hugging Face) |
 | `ci` | **Control plane and web tests** | Server or web tests fail, or either does not build |
 | `ci` | **Container image builds** | The Dockerfile does not build, or the image does not come up healthy and non-root |
 | `security` | **Secret scan** | gitleaks finds a secret anywhere in the history the PR adds |
@@ -47,6 +48,27 @@ gh attestation verify oci://ghcr.io/dandan002/ondo-quartermaster/control-plane:0
 gh attestation verify ondo_agent-0.1.0-py3-none-any.whl -R dandan002/ondo-quartermaster
 ```
 
+## Windows, by hand
+
+`windows.yml` runs only when someone starts it (Actions, **windows**, **Run
+workflow**). It is not a required check, because the Windows side has not been
+proven yet, and this is how to prove it. It does three things:
+
+- runs the agent tests on a GitHub-hosted Windows runner;
+- builds the Intune package with `deploy/windows/build.ps1`;
+- installs, detects and uninstalls that package, then uploads it as an
+  artifact.
+
+See `docs/deploy-windows.md`.
+
+## Decision model, by hand
+
+`decision-measure.yml` runs only when someone starts it. It downloads a Laya
+checkpoint from Hugging Face (repository, subfolder and revision are inputs),
+measures it on the decision fixtures on a CPU runner, and uploads the report.
+Give it `bar`, a reference report committed to the repository (Jev's), and it
+fails when the checkpoint is below it. See `docs/decision-local.md`.
+
 ## Dependencies
 
 Dependabot opens grouped weekly PRs for npm, the agent's Python dependencies,
@@ -77,7 +99,7 @@ In **Settings**:
      Raise approvals to 1 and turn Code Owner review on when a second
      maintainer joins.
    - Require status checks to pass, with *Require branches to be up to date*:
-     `Lint and typecheck`, `Agent tests`, `Control plane and web tests`,
+     `Lint and typecheck`, `Agent tests`, `Laya adapter`, `Control plane and web tests`,
      `Container image builds`, `Secret scan`, `Dependency audit`,
      `CodeQL (python)`, `CodeQL (javascript-typescript)`.
      (A check can be selected once it has run at least once.)
