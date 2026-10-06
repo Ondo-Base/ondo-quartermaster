@@ -12,7 +12,7 @@
     "typecheck": "npm run typecheck --workspace server && npm run typecheck --workspace web"
   },
   "devDependencies": {
-    "@playwright/mcp": "0.0.82"
+    "@playwright/mcp": "0.0.83"
   },
   "allowScripts": {
     "esbuild@0.28.2": true,
